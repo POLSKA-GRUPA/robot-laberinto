@@ -1,0 +1,16 @@
+{
+  "name": "ROBOT: Laberinto de Plataformas",
+  "short_name": "Robot Laberinto",
+  "description": "Guía al robot por 17 niveles de plataformas flotantes hasta el portal.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "lang": "es",
+  "background_color": "#05050f",
+  "theme_color": "#0a0e2a",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

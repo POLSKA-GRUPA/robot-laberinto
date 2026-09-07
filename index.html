@@ -1,0 +1,1339 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<link rel="manifest" href="./manifest.json" />
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="theme-color" content="#0a0e2a" />
+<title>ROBOT: Laberinto de Plataformas</title>
+
+<style>
+  :root {
+    --neon-cyan: #4cf3ff;
+    --neon-magenta: #ff4cf0;
+    --neon-orange: #ffb347;
+    --panel-bg: rgba(8, 10, 24, 0.82);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #05050f;
+    overflow: hidden;
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    color: #eaf6ff;
+    user-select: none;
+  }
+
+  #app {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* ---------- Paneles de superposición genéricos ---------- */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+    background: radial-gradient(ellipse at center, rgba(20, 10, 40, 0.55) 0%, rgba(2, 2, 8, 0.92) 75%);
+    backdrop-filter: blur(2px);
+  }
+
+  .overlay.hidden { display: none; }
+
+  .panel {
+    background: var(--panel-bg);
+    border: 1px solid rgba(76, 243, 255, 0.35);
+    border-radius: 14px;
+    padding: 36px 46px;
+    max-width: 92vw;
+    width: 480px;
+    text-align: center;
+    box-shadow: 0 0 40px rgba(76, 243, 255, 0.15), inset 0 0 60px rgba(76, 243, 255, 0.04);
+  }
+
+  .titulo-juego {
+    font-size: 2.1rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin: 0 0 6px 0;
+    color: #ffffff;
+    text-shadow: 0 0 12px var(--neon-cyan), 0 0 28px rgba(76, 243, 255, 0.5);
+  }
+
+  .subtitulo {
+    font-size: 0.95rem;
+    letter-spacing: 0.06em;
+    color: var(--neon-magenta);
+    text-transform: uppercase;
+    margin: 0 0 24px 0;
+    opacity: 0.85;
+  }
+
+  .instrucciones {
+    font-size: 0.92rem;
+    line-height: 1.6;
+    color: #b9d6e6;
+    margin-bottom: 22px;
+  }
+
+  .instrucciones b { color: var(--neon-cyan); }
+
+  .instrucciones .tecla {
+    display: inline-block;
+    padding: 1px 8px;
+    margin: 0 2px;
+    border: 1px solid rgba(76, 243, 255, 0.5);
+    border-radius: 5px;
+    background: rgba(76, 243, 255, 0.08);
+    font-family: monospace;
+  }
+
+  button.boton-sci {
+    font-family: inherit;
+    font-size: 1rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 12px 30px;
+    margin: 6px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--neon-cyan);
+    background: linear-gradient(180deg, rgba(76, 243, 255, 0.18), rgba(76, 243, 255, 0.05));
+    color: #eafeff;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    box-shadow: 0 0 12px rgba(76, 243, 255, 0.25);
+  }
+
+  button.boton-sci:hover {
+    background: linear-gradient(180deg, rgba(76, 243, 255, 0.35), rgba(76, 243, 255, 0.12));
+    box-shadow: 0 0 22px rgba(76, 243, 255, 0.55);
+    transform: translateY(-1px);
+  }
+
+  button.boton-sci:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  button.boton-secundario {
+    border-color: var(--neon-magenta);
+    box-shadow: 0 0 12px rgba(255, 76, 240, 0.2);
+  }
+  button.boton-secundario:hover {
+    box-shadow: 0 0 22px rgba(255, 76, 240, 0.5);
+  }
+
+  .info-carga {
+    font-size: 0.82rem;
+    color: #8fb3c7;
+    margin-top: 14px;
+    min-height: 1.2em;
+  }
+
+  .info-progreso {
+    font-size: 0.78rem;
+    color: #6f93a8;
+    margin-top: 18px;
+  }
+
+  /* ---------- HUD ---------- */
+  #hud {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 10;
+    display: none;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 18px 24px;
+    pointer-events: none;
+  }
+
+  #hud.visible { display: flex; }
+
+  .hud-caja {
+    background: rgba(6, 8, 20, 0.55);
+    border: 1px solid rgba(76, 243, 255, 0.3);
+    border-radius: 10px;
+    padding: 8px 18px;
+    font-size: 0.95rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    box-shadow: 0 0 14px rgba(76, 243, 255, 0.12);
+  }
+
+  #hud-nivel { color: var(--neon-cyan); }
+  #hud-caidas { color: var(--neon-orange); }
+
+  #hud-reiniciar {
+    pointer-events: auto;
+    margin-left: 10px;
+    font-size: 0.75rem;
+    padding: 6px 12px;
+  }
+
+  .hud-derecha {
+    display: flex;
+    align-items: center;
+  }
+
+  #crosshair-ayuda {
+    position: fixed;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    font-size: 0.75rem;
+    color: rgba(200, 230, 240, 0.55);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    display: none;
+  }
+  #crosshair-ayuda.visible { display: block; }
+
+  /* ---------- Controles táctiles (solo se crean en pantallas táctiles) ---------- */
+  #tactil-zona {
+    position: fixed;
+    left: 0;
+    bottom: calc(0px + env(safe-area-inset-bottom, 0px));
+    width: 40%;
+    height: 46%;
+    z-index: 15;
+    touch-action: none;
+  }
+  #tactil-joy {
+    position: absolute;
+    width: 124px;
+    height: 124px;
+    left: 84px;
+    top: calc(100% - 148px);
+    transform: translate(-50%, -50%); /* el CENTRO de la base cae bajo el dedo */
+    border: 1px solid rgba(76, 243, 255, 0.5);
+    border-radius: 50%;
+    background: rgba(6, 8, 20, 0.35);
+    box-shadow: 0 0 18px rgba(76, 243, 255, 0.15);
+    pointer-events: none;
+  }
+  #tactil-stick {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: rgba(76, 243, 255, 0.22);
+    border: 1px solid var(--neon-cyan);
+    box-shadow: 0 0 12px rgba(76, 243, 255, 0.35);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+  #tactil-salto {
+    position: fixed;
+    right: calc(20px + env(safe-area-inset-right, 0px));
+    bottom: calc(30px + env(safe-area-inset-bottom, 0px));
+    width: 92px;
+    height: 92px;
+    border-radius: 50%;
+    z-index: 15;
+    border: 1px solid var(--neon-cyan);
+    background: rgba(76, 243, 255, 0.14);
+    color: #eafeff;
+    font-family: inherit;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    box-shadow: 0 0 16px rgba(76, 243, 255, 0.25);
+    touch-action: none;
+  }
+
+  #pantalla-completado h2, #pantalla-final h2 {
+    margin-top: 0;
+    color: #ffffff;
+    text-shadow: 0 0 14px var(--neon-magenta);
+    letter-spacing: 0.06em;
+  }
+
+  .stat-final {
+    font-size: 1rem;
+    color: var(--neon-orange);
+    margin: 10px 0 20px 0;
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<!-- HUD en juego -->
+<div id="hud">
+  <div class="hud-caja" id="hud-nivel">Nivel 1 / 17</div>
+  <div class="hud-derecha">
+    <div class="hud-caja" id="hud-caidas">Caídas: 0</div>
+    <button class="boton-sci hud-caja" id="hud-reiniciar" title="Reiniciar nivel actual">Reiniciar (R)</button>
+  </div>
+</div>
+<div id="crosshair-ayuda">Flechas / WASD: mover · ESPACIO: saltar · R: reiniciar nivel</div>
+
+<!-- Pantalla de inicio -->
+<div class="overlay" id="pantalla-inicio">
+  <div class="panel">
+    <h1 class="titulo-juego">ROBOT</h1>
+    <p class="subtitulo">Laberinto de Plataformas</p>
+    <p class="instrucciones">
+      Guía al robot a través de 17 niveles flotantes hasta el portal.<br/>
+      <span class="tecla">&#8593;</span><span class="tecla">&#8592;</span><span class="tecla">&#8595;</span><span class="tecla">&#8594;</span>
+      o <span class="tecla">W</span><span class="tecla">A</span><span class="tecla">S</span><span class="tecla">D</span> para moverte,
+      <span class="tecla">ESPACIO</span> para saltar.
+    </p>
+    <div>
+      <button class="boton-sci" id="btn-jugar" disabled>Cargando…</button>
+      <button class="boton-sci boton-secundario" id="btn-continuar" style="display:none;">Continuar</button>
+    </div>
+    <div class="info-carga" id="info-carga">Cargando robot (0%)…</div>
+    <div class="info-progreso" id="info-progreso"></div>
+  </div>
+</div>
+
+<!-- Nivel superado -->
+<div class="overlay hidden" id="pantalla-completado">
+  <div class="panel">
+    <h2 id="texto-nivel-superado">¡Nivel 1 superado!</h2>
+    <p class="instrucciones">El portal te ha transportado al siguiente sector del laberinto.</p>
+    <button class="boton-sci" id="btn-siguiente-nivel">Siguiente nivel</button>
+  </div>
+</div>
+
+<!-- Juego completado -->
+<div class="overlay hidden" id="pantalla-final">
+  <div class="panel">
+    <h2>¡Has completado el juego!</h2>
+    <p class="stat-final" id="texto-caidas-final">Caídas totales: 0</p>
+    <button class="boton-sci" id="btn-jugar-de-nuevo">Jugar de nuevo</button>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { generarNiveles } from "./levels.js";
+
+/* =========================================================================
+   ROBOT: LABERINTO DE PLATAFORMAS
+   Mini-plataformas 3D en Three.js, sin build step, cargado por importmap.
+   El modelo robot.glb es una malla estática (sin huesos/animaciones), así
+   que todo el movimiento "vivo" del robot (bamboleo, inclinación al andar
+   y al girar) se simula proceduralmente rotando/trasladando un grupo
+   contenedor, nunca el asset en sí.
+   ========================================================================= */
+
+/* ---------------------------- Constantes ------------------------------ */
+
+const ROBOT_TARGET_HEIGHT = 1.6;   // Altura deseada del robot en unidades de mundo.
+// Si el robot camina "de espaldas" visualmente, el GLB mira hacia -Z en vez
+// de +Z: cambiar esta constante a Math.PI arregla la orientación sin tocar
+// el resto de la lógica de movimiento.
+const MODEL_FORWARD_OFFSET = 0;
+
+const GRAVITY = -30;                // Aceleración de la gravedad (unidades/s^2).
+const JUMP_SPEED = 11;              // Velocidad vertical al saltar.
+const MOVE_SPEED = 6;               // Velocidad horizontal de desplazamiento.
+const PLAYER_RADIUS = 0.55;         // Radio horizontal aproximado del robot (para colisiones).
+const ROTATE_SPEED = 9;             // Suavizado de rotación del robot hacia la dirección de movimiento.
+const CAMERA_YAW_LAG = 3.2;         // Suavizado del yaw de cámara respecto al del robot.
+const CAMERA_DISTANCE = 7.5;
+const CAMERA_HEIGHT = 3.4;
+const CAMERA_LOOK_AHEAD = 2.2;
+const CAMERA_LOOK_HEIGHT = 1.1;
+
+const DEATH_Y = -10;                 // Por debajo de esta altura, se considera caída.
+const PORTAL_TRIGGER_DIST = 1.9;     // Distancia para activar el portal.
+const FALLING_PLATFORM_SHAKE_TIME = 0.5; // Segundos temblando antes de caer.
+const FALLING_PLATFORM_GONE_Y = -14;     // Por debajo de esto, se oculta la plataforma caída.
+
+const PLATFORM_COLORS = {
+  static: 0x35c7ff,
+  moving: 0xffb347,
+  falling: 0xff4d6d,
+};
+
+/* ------------------------------ Niveles -------------------------------
+   Los 17 niveles (5 manuales + 12 generados por procedimiento, todos
+   validados como completables) viven en levels.js para poder compartirlos
+   con los tests externos. El eje de avance principal es -Z.
+   ------------------------------------------------------------------- */
+
+const LEVELS = generarNiveles();
+
+/* --------------------------- LocalStorage ------------------------------ */
+
+const STORAGE_KEY = "robotLaberintoProgreso";
+
+function cargarProgreso() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { maxNivel: 0, caidasTotales: 0 };
+    const datos = JSON.parse(raw);
+    return {
+      maxNivel: Number.isFinite(datos.maxNivel) ? datos.maxNivel : 0,
+      caidasTotales: Number.isFinite(datos.caidasTotales) ? datos.caidasTotales : 0,
+    };
+  } catch (e) {
+    return { maxNivel: 0, caidasTotales: 0 };
+  }
+}
+
+function guardarProgreso(progreso) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(progreso));
+  } catch (e) {
+    // localStorage no disponible (modo privado, etc.): el juego sigue funcionando sin persistencia.
+  }
+}
+
+const progreso = cargarProgreso();
+
+/* ------------------------------ Estado global --------------------------- */
+
+const gameState = {
+  fase: "inicio",        // 'inicio' | 'jugando' | 'nivel-completado' | 'final'
+  nivelIndex: 0,
+  caidasSesion: 0,
+  tiempoNivel: 0,         // tiempo acumulado del nivel actual (para plataformas móviles)
+};
+
+const input = {
+  forward: false, backward: false, left: false, right: false, jump: false, restart: false,
+  jumpQueuedAt: 0, // marca de tiempo del último flanco de subida de ESPACIO (buffer de salto)
+};
+
+window.addEventListener("keydown", (e) => {
+  switch (e.code) {
+    case "ArrowUp": case "KeyW": input.forward = true; break;
+    case "ArrowDown": case "KeyS": input.backward = true; break;
+    case "ArrowLeft": case "KeyA": input.left = true; break;
+    case "ArrowRight": case "KeyD": input.right = true; break;
+    case "Space":
+      e.preventDefault();
+      if (!input.jump) input.jumpQueuedAt = performance.now(); // flanco de subida
+      input.jump = true;
+      break;
+    case "KeyR":
+      input.restart = true;
+      break;
+    default: return;
+  }
+});
+
+window.addEventListener("keyup", (e) => {
+  switch (e.code) {
+    case "ArrowUp": case "KeyW": input.forward = false; break;
+    case "ArrowDown": case "KeyS": input.backward = false; break;
+    case "ArrowLeft": case "KeyA": input.left = false; break;
+    case "ArrowRight": case "KeyD": input.right = false; break;
+    case "Space": input.jump = false; break;
+    case "KeyR": input.restart = false; break;
+    default: return;
+  }
+});
+
+/* ------------------------------ Referencias DOM ------------------------- */
+
+const dom = {
+  app: document.getElementById("app"),
+  hud: document.getElementById("hud"),
+  hudNivel: document.getElementById("hud-nivel"),
+  hudCaidas: document.getElementById("hud-caidas"),
+  hudReiniciar: document.getElementById("hud-reiniciar"),
+  ayuda: document.getElementById("crosshair-ayuda"),
+  pantallaInicio: document.getElementById("pantalla-inicio"),
+  btnJugar: document.getElementById("btn-jugar"),
+  btnContinuar: document.getElementById("btn-continuar"),
+  infoCarga: document.getElementById("info-carga"),
+  infoProgreso: document.getElementById("info-progreso"),
+  pantallaCompletado: document.getElementById("pantalla-completado"),
+  textoNivelSuperado: document.getElementById("texto-nivel-superado"),
+  btnSiguienteNivel: document.getElementById("btn-siguiente-nivel"),
+  pantallaFinal: document.getElementById("pantalla-final"),
+  textoCaidasFinal: document.getElementById("texto-caidas-final"),
+  btnJugarDeNuevo: document.getElementById("btn-jugar-de-nuevo"),
+};
+
+if (progreso.maxNivel > 0 && progreso.maxNivel < LEVELS.length) {
+  dom.btnContinuar.style.display = "inline-block";
+  dom.btnContinuar.textContent = `Continuar (Nivel ${progreso.maxNivel + 1})`;
+}
+if (progreso.caidasTotales > 0) {
+  dom.infoProgreso.textContent = `Caídas totales acumuladas: ${progreso.caidasTotales}`;
+}
+
+/* ------------------------------- Three.js -------------------------------- */
+
+const scene = new THREE.Scene();
+
+const camera = new THREE.PerspectiveCamera(
+  62, window.innerWidth / window.innerHeight, 0.1, 500
+);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+dom.app.appendChild(renderer.domElement);
+
+// Fondo degradado (vacío sci-fi) + niebla.
+function crearTexturaGradiente() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 8;
+  canvas.height = 256;
+  const ctx = canvas.getContext("2d");
+  const grad = ctx.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0, "#0a0620");
+  grad.addColorStop(0.45, "#0a0e2a");
+  grad.addColorStop(1, "#020208");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 8, 256);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+scene.background = crearTexturaGradiente();
+scene.fog = new THREE.FogExp2(0x05061a, 0.022);
+
+// Estrellas de fondo.
+function crearEstrellas() {
+  const N = 2200;
+  const positions = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    // Distribución esférica aleatoria, lejos del área jugable.
+    const r = 150 + Math.random() * 220;
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    positions[i * 3 + 0] = r * Math.sin(phi) * Math.cos(theta);
+    positions[i * 3 + 1] = Math.abs(r * Math.cos(phi)) * 0.6 + 10;
+    positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+  }
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.PointsMaterial({
+    color: 0xdfefff, size: 1.3, sizeAttenuation: false,
+    transparent: true, opacity: 0.85, depthWrite: false,
+    fog: false, // sin esto, FogExp2 apaga las estrellas (están a 150-370 unidades)
+  });
+  const puntos = new THREE.Points(geom, mat);
+  puntos.renderOrder = -1;
+  scene.add(puntos);
+}
+crearEstrellas();
+
+// Iluminación.
+const luzAmbiente = new THREE.AmbientLight(0x2a3a66, 0.75);
+scene.add(luzAmbiente);
+
+const luzDireccional = new THREE.DirectionalLight(0xfff2e0, 1.3);
+luzDireccional.position.set(12, 22, 14);
+luzDireccional.castShadow = true;
+luzDireccional.shadow.mapSize.set(1024, 1024);
+luzDireccional.shadow.camera.near = 1;
+luzDireccional.shadow.camera.far = 120;
+scene.add(luzDireccional);
+scene.add(luzDireccional.target);
+
+// Luz de relleno fría desde abajo para dar aspecto sci-fi a las plataformas.
+const luzRelleno = new THREE.HemisphereLight(0x335577, 0x0a0a14, 0.5);
+scene.add(luzRelleno);
+
+/* ----------------------------- Contenedor de nivel ------------------------ */
+
+const levelGroup = new THREE.Group();
+scene.add(levelGroup);
+
+let currentRuntimePlatforms = []; // [{data, group, base:{x,y,z}, state, timer, velY}]
+let portalRuntime = null;         // {group, torus, light, particulas}
+
+function limpiarNivel() {
+  for (const hijo of [...levelGroup.children]) {
+    levelGroup.remove(hijo);
+    hijo.traverse((obj) => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) {
+        if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
+        else obj.material.dispose();
+      }
+    });
+  }
+  currentRuntimePlatforms = [];
+  portalRuntime = null;
+}
+
+function crearMallaPlataforma(size, colorBorde) {
+  const grupo = new THREE.Group();
+  const geometria = new THREE.BoxGeometry(size[0], size[1], size[2]);
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x141a30,
+    metalness: 0.35,
+    roughness: 0.55,
+    emissive: new THREE.Color(colorBorde).multiplyScalar(0.05),
+  });
+  const caja = new THREE.Mesh(geometria, material);
+  caja.castShadow = true;
+  caja.receiveShadow = true;
+  grupo.add(caja);
+
+  // Bordes brillantes (aspecto de rejilla sci-fi).
+  const bordes = new THREE.EdgesGeometry(geometria);
+  const materialBordes = new THREE.LineBasicMaterial({ color: colorBorde, transparent: true, opacity: 0.9 });
+  const lineas = new THREE.LineSegments(bordes, materialBordes);
+  grupo.add(lineas);
+
+  // Panel superior ligeramente emisivo para reforzar el look "grid".
+  const panel = new THREE.Mesh(
+    new THREE.PlaneGeometry(size[0] * 0.86, size[2] * 0.86),
+    new THREE.MeshBasicMaterial({ color: colorBorde, transparent: true, opacity: 0.06 })
+  );
+  panel.rotation.x = -Math.PI / 2;
+  panel.position.y = size[1] / 2 + 0.01;
+  grupo.add(panel);
+
+  return grupo;
+}
+
+function construirPlataformas(datosNivel) {
+  const bbox = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
+
+  for (const data of datosNivel.platforms) {
+    const color = PLATFORM_COLORS[data.type] || PLATFORM_COLORS.static;
+    const grupo = crearMallaPlataforma(data.size, color);
+    grupo.position.set(data.pos[0], data.pos[1], data.pos[2]);
+    levelGroup.add(grupo);
+
+    const registro = {
+      data,
+      group: grupo,
+      base: { x: data.pos[0], y: data.pos[1], z: data.pos[2] },
+      // Estado de plataformas 'falling': 'idle' | 'shaking' | 'falling' | 'gone'.
+      state: "idle",
+      timer: 0,
+      velY: 0,
+    };
+    currentRuntimePlatforms.push(registro);
+
+    const halfX = data.size[0] / 2;
+    const halfZ = data.size[2] / 2;
+    let maxReachX = halfX, maxReachZ = halfZ;
+    if (data.type === "moving") {
+      if (data.axis === "x") maxReachX += data.amplitude;
+      if (data.axis === "z") maxReachZ += data.amplitude;
+    }
+    bbox.minX = Math.min(bbox.minX, data.pos[0] - maxReachX);
+    bbox.maxX = Math.max(bbox.maxX, data.pos[0] + maxReachX);
+    bbox.minZ = Math.min(bbox.minZ, data.pos[2] - maxReachZ);
+    bbox.maxZ = Math.max(bbox.maxZ, data.pos[2] + maxReachZ);
+  }
+  return bbox;
+}
+
+function crearPortal(datosNivel) {
+  const grupo = new THREE.Group();
+  grupo.position.set(datosNivel.portal.x, datosNivel.portal.y, datosNivel.portal.z);
+
+  const colorPortal = 0x8a5cff;
+  const torus = new THREE.Mesh(
+    new THREE.TorusGeometry(1.15, 0.22, 16, 48),
+    new THREE.MeshStandardMaterial({
+      color: 0x120a2a,
+      emissive: new THREE.Color(colorPortal),
+      emissiveIntensity: 1.8,
+      metalness: 0.4,
+      roughness: 0.3,
+    })
+  );
+  torus.castShadow = false;
+  grupo.add(torus);
+
+  const disco = new THREE.Mesh(
+    new THREE.CircleGeometry(1.0, 32),
+    new THREE.MeshBasicMaterial({
+      color: 0xd9c8ff, transparent: true, opacity: 0.35,
+      side: THREE.DoubleSide,
+    })
+  );
+  grupo.add(disco);
+
+  const luz = new THREE.PointLight(colorPortal, 2.2, 11, 2);
+  grupo.add(luz);
+
+  // Partículas ascendentes alrededor del portal.
+  const N = 60;
+  const positions = new Float32Array(N * 3);
+  const fases = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const rad = 0.6 + Math.random() * 1.1;
+    positions[i * 3 + 0] = Math.cos(ang) * rad;
+    positions[i * 3 + 1] = (Math.random() - 0.5) * 2;
+    positions[i * 3 + 2] = Math.sin(ang) * rad;
+    fases[i] = Math.random() * 10;
+  }
+  const geomParticulas = new THREE.BufferGeometry();
+  geomParticulas.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  const matParticulas = new THREE.PointsMaterial({
+    color: 0xcbb8ff, size: 0.09, transparent: true, opacity: 0.85,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const particulas = new THREE.Points(geomParticulas, matParticulas);
+  grupo.add(particulas);
+
+  levelGroup.add(grupo);
+  portalRuntime = { group: grupo, torus, luz, particulas, fases, disco };
+}
+
+/* -------------------------- Robot / jugador --------------------------- */
+
+let robotTemplate = null; // Escena GLTF ya centrada/escalada, se clona para el jugador.
+
+const player = {
+  root: new THREE.Group(),       // Posición del mundo = pies del robot.
+  bob: new THREE.Group(),        // Bamboleo/inclinación procedural.
+  visual: null,                  // Clon del modelo robot.
+  velocity: new THREE.Vector3(),
+  grounded: false,
+  currentPlatform: null,         // Referencia al registro de plataforma actual (para plataformas móviles).
+  moving: false,
+  bobPhase: Math.random() * Math.PI * 2,
+  turnTilt: 0,
+};
+player.root.add(player.bob);
+scene.add(player.root);
+
+let cameraYaw = 0;
+
+function centrarYEscalarModelo(modelo) {
+  const box = new THREE.Box3().setFromObject(modelo);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const escala = size.y > 0.0001 ? ROBOT_TARGET_HEIGHT / size.y : 1;
+  modelo.scale.setScalar(escala);
+
+  // Recalcular la caja tras escalar para centrar en X/Z y apoyar los pies en y=0.
+  const box2 = new THREE.Box3().setFromObject(modelo);
+  const center2 = new THREE.Vector3();
+  box2.getCenter(center2);
+  modelo.position.x -= center2.x;
+  modelo.position.z -= center2.z;
+  modelo.position.y -= box2.min.y;
+
+  modelo.traverse((obj) => {
+    if (obj.isMesh) {
+      obj.castShadow = true;
+      obj.receiveShadow = true;
+    }
+  });
+}
+
+function cargarRobot(onProgress) {
+  return new Promise((resolve, reject) => {
+    const loader = new GLTFLoader();
+    loader.load(
+      "./robot.glb",
+      (gltf) => {
+        const modelo = gltf.scene;
+        centrarYEscalarModelo(modelo);
+        resolve(modelo);
+      },
+      (evt) => {
+        if (onProgress) onProgress(evt);
+      },
+      (err) => reject(err)
+    );
+  });
+}
+
+function instanciarJugador() {
+  if (player.visual) {
+    player.bob.remove(player.visual);
+  }
+  player.visual = robotTemplate.clone(true);
+  player.visual.rotation.y = MODEL_FORWARD_OFFSET;
+  player.bob.add(player.visual);
+}
+
+/* ------------------------------ Utilidades ------------------------------ */
+
+function lerpAngulo(a, b, t) {
+  let diff = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
+  if (diff < -Math.PI) diff += Math.PI * 2;
+  return a + diff * t;
+}
+
+function amortiguar(actual, objetivo, velocidad, dt) {
+  // Aproximación exponencial suave e independiente del framerate.
+  const t = 1 - Math.exp(-velocidad * dt);
+  return actual + (objetivo - actual) * t;
+}
+
+/* ------------------------- Construcción de nivel ------------------------- */
+
+function construirNivel(indice) {
+  limpiarNivel();
+  gameState.nivelIndex = indice;
+  gameState.tiempoNivel = 0;
+
+  const datosNivel = LEVELS[indice];
+  const bbox = construirPlataformas(datosNivel);
+  crearPortal(datosNivel);
+
+  // Ajustar el frustum de sombra de la luz direccional al tamaño real del nivel.
+  // La luz es diagonal (+12,+22,+14), así que la Z del mundo también proyecta sobre
+  // los ejes de la cámara de sombras: hay que dimensionar por la proyección del
+  // bbox completo, o las sombras desaparecen pasada la mitad de los niveles largos.
+  const margen = 8;
+  const halfX = bbox.maxX - bbox.minX;
+  const halfZ = bbox.maxZ - bbox.minZ;
+  const halfW = margen + (0.76 * halfX + 0.66 * halfZ) / 2;
+  const cam = luzDireccional.shadow.camera;
+  cam.left = -halfW;
+  cam.right = halfW;
+  cam.top = margen;
+  cam.bottom = -(margen + 0.7 * halfZ);
+  cam.updateProjectionMatrix();
+  const centroZ = (bbox.minZ + bbox.maxZ) / 2;
+  luzDireccional.position.set((bbox.minX + bbox.maxX) / 2 + 12, 22, centroZ + 14);
+  luzDireccional.target.position.set((bbox.minX + bbox.maxX) / 2, 0, centroZ);
+  luzDireccional.target.updateMatrixWorld();
+
+  // Reposicionar jugador en el spawn: mirando hacia -Z (hacia las plataformas y el
+  // portal). La cámara arranca DETRÁS del robot (en +Z) mirando a lo largo del nivel.
+  const spawn = datosNivel.spawn;
+  player.root.position.set(spawn.x, spawn.y, spawn.z);
+  player.velocity.set(0, 0, 0);
+  player.grounded = false;
+  player.currentPlatform = null;
+  player.root.rotation.y = Math.PI;
+  player.bob.rotation.set(0, 0, 0);
+  player.bob.position.set(0, 0, 0);
+
+  cameraYaw = Math.PI;
+  posicionarCamaraInstantanea();
+
+  dom.hudNivel.textContent = `${datosNivel.nombre} / ${LEVELS.length}`;
+}
+
+function resetearPlataformasQueCaen() {
+  for (const reg of currentRuntimePlatforms) {
+    if (reg.data.type !== "falling") continue;
+    reg.state = "idle";
+    reg.timer = 0;
+    reg.velY = 0;
+    reg.group.visible = true;
+    reg.group.position.set(reg.base.x, reg.base.y, reg.base.z);
+  }
+}
+
+/* ------------------------------ Física / lógica --------------------------- */
+
+function actualizarPlataformas(dt) {
+  gameState.tiempoNivel += dt;
+  const t = gameState.tiempoNivel;
+
+  for (const reg of currentRuntimePlatforms) {
+    const data = reg.data;
+
+    if (data.type === "moving") {
+      const antes = reg.group.position.clone();
+      const offset = Math.sin(t * data.speed + (data.phase || 0)) * data.amplitude;
+      if (data.axis === "x") reg.group.position.x = reg.base.x + offset;
+      else reg.group.position.z = reg.base.z + offset;
+
+      if (player.currentPlatform === reg) {
+        player.root.position.x += reg.group.position.x - antes.x;
+        player.root.position.z += reg.group.position.z - antes.z;
+      }
+      continue;
+    }
+
+    if (data.type === "falling") {
+      if (reg.state === "shaking") {
+        reg.timer += dt;
+        const intensidad = 0.04;
+        reg.group.position.x = reg.base.x + (Math.random() - 0.5) * intensidad;
+        reg.group.position.z = reg.base.z + (Math.random() - 0.5) * intensidad;
+        if (reg.timer >= FALLING_PLATFORM_SHAKE_TIME) {
+          reg.state = "falling";
+          reg.group.position.x = reg.base.x;
+          reg.group.position.z = reg.base.z;
+        }
+      } else if (reg.state === "falling") {
+        reg.velY += GRAVITY * dt;
+        reg.group.position.y += reg.velY * dt;
+        if (reg.group.position.y < FALLING_PLATFORM_GONE_Y) {
+          reg.state = "gone";
+          reg.group.visible = false;
+        }
+      }
+    }
+  }
+}
+
+function resolverSuelo() {
+  let grounded = false;
+  let groundY = -Infinity;
+  let plataforma = null;
+
+  for (const reg of currentRuntimePlatforms) {
+    if (reg.data.type === "falling" && (reg.state === "falling" || reg.state === "gone")) {
+      continue; // Ya no sostiene al jugador.
+    }
+    const size = reg.data.size;
+    const halfX = size[0] / 2;
+    const halfZ = size[2] / 2;
+    const centro = reg.group.position;
+    const top = centro.y + size[1] / 2;
+
+    const dentroX = Math.abs(player.root.position.x - centro.x) <= halfX + PLAYER_RADIUS * 0.6;
+    const dentroZ = Math.abs(player.root.position.z - centro.z) <= halfZ + PLAYER_RADIUS * 0.6;
+    if (!dentroX || !dentroZ) continue;
+
+    const feetY = player.root.position.y;
+    const cayendoOReposo = player.velocity.y <= 0.05;
+    if (cayendoOReposo && feetY >= top - 0.4 && feetY <= top + 0.55) {
+      if (top > groundY) {
+        groundY = top;
+        grounded = true;
+        plataforma = reg;
+      }
+    }
+  }
+  return { grounded, groundY, plataforma };
+}
+
+function actualizarJugador(dt) {
+  // --- Entrada relativa a la cámara ---
+  const forwardVec = new THREE.Vector3(Math.sin(cameraYaw), 0, Math.cos(cameraYaw));
+  // Derecha REAL de la cámara: forward rotado -90° sobre Y. (Con +90° el vector
+  // apuntaba a la izquierda de pantalla y A/D salían invertidos.)
+  const rightVec = new THREE.Vector3(Math.sin(cameraYaw - Math.PI / 2), 0, Math.cos(cameraYaw - Math.PI / 2));
+  const moveDir = new THREE.Vector3();
+  if (input.forward) moveDir.add(forwardVec);
+  if (input.backward) moveDir.sub(forwardVec);
+  if (input.right) moveDir.add(rightVec);
+  if (input.left) moveDir.sub(rightVec);
+  // Joystick táctil (si existe): mismo sistema de referencia que el teclado,
+  // así respeta el gate del chase-cam y el resto de la física sin tocar nada más.
+  const tv = window.__touchVec; if (tv) { moveDir.addScaledVector(forwardVec, tv.y); moveDir.addScaledVector(rightVec, tv.x); }
+
+  let girando = 0;
+  if (moveDir.lengthSq() > 0.0001) {
+    moveDir.normalize();
+    const targetYaw = Math.atan2(moveDir.x, moveDir.z);
+    const yawAnterior = player.root.rotation.y;
+    player.root.rotation.y = lerpAngulo(yawAnterior, targetYaw, 1 - Math.exp(-ROTATE_SPEED * dt));
+    girando = lerpAngulo(0, ((player.root.rotation.y - yawAnterior + Math.PI) % (Math.PI * 2)) - Math.PI, 1) / dt;
+    player.velocity.x = moveDir.x * MOVE_SPEED;
+    player.velocity.z = moveDir.z * MOVE_SPEED;
+    player.moving = true;
+  } else {
+    player.velocity.x = 0;
+    player.velocity.z = 0;
+    player.moving = false;
+  }
+
+  // La cámara sigue el yaw del robot con un pequeño retardo (sensación de "chase cam").
+  // Solo cuando el movimiento lleva componente hacia delante: si persiguiera el yaw
+  // también yendo hacia atrás o de lado, el input relativo a cámara crea un bucle
+  // de realimentación y el robot orbita en círculos en vez de caminar recto.
+  if (moveDir.lengthSq() > 0.0001 && moveDir.dot(forwardVec) > 0.05) {
+    cameraYaw = lerpAngulo(cameraYaw, player.root.rotation.y, 1 - Math.exp(-CAMERA_YAW_LAG * dt));
+  }
+
+  // --- Salto (con buffer de 120 ms: pulsar justo antes de aterrizar sí salta) ---
+  if (input.jumpQueuedAt) {
+    if (player.grounded && performance.now() - input.jumpQueuedAt <= 120) {
+      player.velocity.y = JUMP_SPEED;
+      player.grounded = false;
+      player.currentPlatform = null;
+      input.jumpQueuedAt = 0;
+    } else if (performance.now() - input.jumpQueuedAt > 120) {
+      input.jumpQueuedAt = 0; // el buffer caduca
+    }
+  }
+
+  // --- Gravedad e integración ---
+  player.velocity.y += GRAVITY * dt;
+  player.root.position.x += player.velocity.x * dt;
+  player.root.position.z += player.velocity.z * dt;
+  player.root.position.y += player.velocity.y * dt;
+
+  // --- Colisión con el suelo (plataformas) ---
+  const suelo = resolverSuelo();
+  if (suelo.grounded) {
+    player.root.position.y = suelo.groundY;
+    player.velocity.y = 0;
+    player.grounded = true;
+    if (player.currentPlatform !== suelo.plataforma) {
+      player.currentPlatform = suelo.plataforma;
+      // Si es una plataforma que cae y aún está intacta, arranca el temblor.
+      if (suelo.plataforma.data.type === "falling" && suelo.plataforma.state === "idle") {
+        suelo.plataforma.state = "shaking";
+        suelo.plataforma.timer = 0;
+      }
+    }
+  } else {
+    player.grounded = false;
+    player.currentPlatform = null;
+  }
+
+  // --- Animación procedural (bamboleo, inclinación) ---
+  player.bobPhase += dt * (player.moving ? 6.5 : 2.2);
+  const amplitudBob = player.moving ? 0.05 : 0.09;
+  player.bob.position.y = Math.sin(player.bobPhase) * amplitudBob;
+
+  const inclinacionObjetivo = player.moving ? -0.18 : 0;
+  player.bob.rotation.x = amortiguar(player.bob.rotation.x, inclinacionObjetivo, 8, dt);
+
+  const tiltObjetivo = THREE.MathUtils.clamp(girando * 0.12, -0.35, 0.35);
+  player.turnTilt = amortiguar(player.turnTilt, tiltObjetivo, 6, dt);
+  player.bob.rotation.z = player.turnTilt;
+}
+
+function posicionarCamaraInstantanea() {
+  const forwardVec = new THREE.Vector3(Math.sin(cameraYaw), 0, Math.cos(cameraYaw));
+  const posDeseada = player.root.position.clone()
+    .addScaledVector(forwardVec, -CAMERA_DISTANCE)
+    .add(new THREE.Vector3(0, CAMERA_HEIGHT, 0));
+  camera.position.copy(posDeseada);
+  const mirarA = player.root.position.clone()
+    .addScaledVector(forwardVec, CAMERA_LOOK_AHEAD)
+    .add(new THREE.Vector3(0, CAMERA_LOOK_HEIGHT, 0));
+  camera.lookAt(mirarA);
+}
+
+function actualizarCamara(dt) {
+  const forwardVec = new THREE.Vector3(Math.sin(cameraYaw), 0, Math.cos(cameraYaw));
+  const posDeseada = player.root.position.clone()
+    .addScaledVector(forwardVec, -CAMERA_DISTANCE)
+    .add(new THREE.Vector3(0, CAMERA_HEIGHT, 0));
+
+  const t = 1 - Math.exp(-6 * dt);
+  camera.position.lerp(posDeseada, t);
+
+  const mirarA = player.root.position.clone()
+    .addScaledVector(forwardVec, CAMERA_LOOK_AHEAD)
+    .add(new THREE.Vector3(0, CAMERA_LOOK_HEIGHT, 0));
+  camera.lookAt(mirarA);
+}
+
+function actualizarPortal(dt) {
+  if (!portalRuntime) return;
+  portalRuntime.torus.rotation.z += dt * 0.6;
+  portalRuntime.torus.rotation.x += dt * 0.15;
+  const pulso = 1.6 + Math.sin(performance.now() * 0.003) * 0.5;
+  portalRuntime.torus.material.emissiveIntensity = pulso;
+  portalRuntime.particulas.rotation.y += dt * 0.4;
+  portalRuntime.disco.material.opacity = 0.25 + Math.sin(performance.now() * 0.004) * 0.1;
+}
+
+function comprobarMuerte() {
+  if (player.root.position.y < DEATH_Y) {
+    gameState.caidasSesion += 1;
+    progreso.caidasTotales += 1;
+    guardarProgreso(progreso);
+    actualizarHudCaidas();
+
+    resetearPlataformasQueCaen();
+
+    const spawn = LEVELS[gameState.nivelIndex].spawn;
+    player.root.position.set(spawn.x, spawn.y, spawn.z);
+    player.velocity.set(0, 0, 0);
+    player.grounded = false;
+    player.currentPlatform = null;
+    // Reorientar igual que al construir el nivel: robot mirando al nivel y cámara
+    // recolocada al instante (antes la cámara planeaba a través del mapa).
+    player.root.rotation.y = Math.PI;
+    cameraYaw = Math.PI;
+    posicionarCamaraInstantanea();
+  }
+}
+
+function comprobarPortal() {
+  if (!portalRuntime) return;
+  const centroPortal = portalRuntime.group.position;
+  const centroJugador = player.root.position.clone().add(new THREE.Vector3(0, 0.8, 0));
+  const dist = centroJugador.distanceTo(centroPortal);
+  if (dist < PORTAL_TRIGGER_DIST) {
+    completarNivel();
+  }
+}
+
+/* -------------------------------- Flujo UI -------------------------------- */
+
+function actualizarHudCaidas() {
+  dom.hudCaidas.textContent = `Caídas: ${gameState.caidasSesion}`;
+}
+
+function mostrar(el) { el.classList.remove("hidden"); }
+function ocultar(el) { el.classList.add("hidden"); }
+
+function iniciarJuegoDesdeNivel(indice) {
+  gameState.caidasSesion = 0;
+  actualizarHudCaidas();
+  instanciarJugador();
+  construirNivel(indice);
+  gameState.fase = "jugando";
+  ocultar(dom.pantallaInicio);
+  ocultar(dom.pantallaCompletado);
+  ocultar(dom.pantallaFinal);
+  dom.hud.classList.add("visible");
+  dom.ayuda.classList.add("visible");
+}
+
+function completarNivel() {
+  gameState.fase = "nivel-completado";
+  const esUltimo = gameState.nivelIndex >= LEVELS.length - 1;
+
+  progreso.maxNivel = Math.max(progreso.maxNivel, gameState.nivelIndex + 1);
+  guardarProgreso(progreso);
+
+  if (esUltimo) {
+    dom.textoCaidasFinal.textContent = `Caídas totales: ${progreso.caidasTotales}`;
+    mostrar(dom.pantallaFinal);
+    dom.hud.classList.remove("visible");
+    dom.ayuda.classList.remove("visible");
+  } else {
+    dom.textoNivelSuperado.textContent = `¡${LEVELS[gameState.nivelIndex].nombre} superado!`;
+    mostrar(dom.pantallaCompletado);
+  }
+}
+
+dom.btnSiguienteNivel.addEventListener("click", () => {
+  ocultar(dom.pantallaCompletado);
+  const siguiente = gameState.nivelIndex + 1;
+  construirNivel(siguiente);
+  gameState.fase = "jugando";
+});
+
+dom.btnJugarDeNuevo.addEventListener("click", () => {
+  iniciarJuegoDesdeNivel(0);
+});
+
+dom.btnJugar.addEventListener("click", () => {
+  if (!robotTemplate) return;
+  iniciarJuegoDesdeNivel(0);
+});
+
+dom.btnContinuar.addEventListener("click", () => {
+  if (!robotTemplate) return;
+  iniciarJuegoDesdeNivel(Math.min(progreso.maxNivel, LEVELS.length - 1));
+});
+
+dom.hudReiniciar.addEventListener("click", () => {
+  if (gameState.fase !== "jugando") return;
+  resetearPlataformasQueCaen();
+  construirNivel(gameState.nivelIndex);
+  gameState.fase = "jugando";
+});
+
+/* --------------------------------- Resize ---------------------------------- */
+
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+/* ---------------------------------- Bucle ----------------------------------- */
+
+const reloj = new THREE.Clock();
+let reinicioArmado = true; // evita reiniciar en bucle mientras se mantiene pulsada R
+
+function animar() {
+  requestAnimationFrame(animar);
+  const dt = Math.min(reloj.getDelta(), 0.05);
+
+  if (gameState.fase === "jugando") {
+    if (input.restart) {
+      if (reinicioArmado) {
+        reinicioArmado = false;
+        resetearPlataformasQueCaen();
+        construirNivel(gameState.nivelIndex);
+      }
+    } else {
+      reinicioArmado = true;
+    }
+
+    actualizarPlataformas(dt);
+    actualizarJugador(dt);
+    actualizarCamara(dt);
+    actualizarPortal(dt);
+    comprobarMuerte();
+    comprobarPortal();
+  }
+
+  renderer.render(scene, camera);
+}
+
+/* ------------------------------- Arranque ------------------------------- */
+
+cargarRobot((evt) => {
+  if (evt.total) {
+    const pct = Math.round((evt.loaded / evt.total) * 100);
+    dom.infoCarga.textContent = `Cargando robot (${pct}%)…`;
+  } else {
+    dom.infoCarga.textContent = "Cargando robot…";
+  }
+}).then((modelo) => {
+  robotTemplate = modelo;
+  dom.infoCarga.textContent = "Robot listo.";
+  dom.btnJugar.disabled = false;
+  dom.btnJugar.textContent = "Jugar";
+}).catch((err) => {
+  console.error("Error cargando robot.glb:", err);
+  dom.infoCarga.textContent = "Error al cargar robot.glb. Revisa la consola.";
+});
+
+animar();
+
+// Hook de depuración/verificación: solo con ?debug=1 en la URL. No afecta al juego
+// normal. Expone estado interno para pruebas automatizadas.
+if (new URLSearchParams(location.search).has("debug")) {
+  window.__game = {
+    player,
+    gameState,
+    input,
+    getCameraYaw: () => cameraYaw,
+    portal: () => portalRuntime ? { x: portalRuntime.group.position.x, y: portalRuntime.group.position.y, z: portalRuntime.group.position.z } : null,
+    plataformas: () => currentRuntimePlatforms.map((r) => ({
+      type: r.data.type, state: r.state,
+      x: +r.group.position.x.toFixed(2), y: +r.group.position.y.toFixed(2), z: +r.group.position.z.toFixed(2),
+      w: r.data.size[0], d: r.data.size[2],
+    })),
+  };
+}
+
+/* ----------------------- Controles táctiles (móvil) ----------------------- */
+// Solo se crean si el dispositivo tiene pantalla táctil: en escritorio no
+// existe ningún elemento extra en el DOM ni consumo de eventos.
+function montarControlesTactiles() {
+  const esTactil = matchMedia("(pointer: coarse)").matches
+    || "ontouchstart" in window
+    || navigator.maxTouchPoints > 0;
+  if (!esTactil) return;
+
+  window.__touchVec = { x: 0, y: 0 };
+
+  // Zona del joystick (inferior izquierda, ~40% del ancho) con origen dinámico:
+  // la base aparece donde el dedo toca por primera vez.
+  const zona = document.createElement("div");
+  zona.id = "tactil-zona";
+  const base = document.createElement("div");
+  base.id = "tactil-joy";
+  const stick = document.createElement("div");
+  stick.id = "tactil-stick";
+  base.appendChild(stick);
+  zona.appendChild(base);
+  document.body.appendChild(zona);
+
+  // Botón de salto (inferior derecha): reutiliza el mismo camino de entrada que
+  // la barra espaciadora, incluido el buffer de salto.
+  const btnSalto = document.createElement("button");
+  btnSalto.id = "tactil-salto";
+  btnSalto.type = "button";
+  btnSalto.textContent = "SALTAR";
+  document.body.appendChild(btnSalto);
+
+  const RADIO = 60;
+  let idDedo = null;
+
+  function moverStick(t) {
+    const r = zona.getBoundingClientRect();
+    let dx = (t.clientX - r.left) - parseFloat(base.style.left);
+    let dy = (t.clientY - r.top) - parseFloat(base.style.top);
+    const d = Math.hypot(dx, dy);
+    if (d > RADIO) { dx = (dx / d) * RADIO; dy = (dy / d) * RADIO; }
+    stick.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    window.__touchVec.x = dx / RADIO;
+    window.__touchVec.y = -dy / RADIO; // arriba de la pantalla = adelante
+  }
+
+  function soltarStick() {
+    idDedo = null;
+    window.__touchVec.x = 0;
+    window.__touchVec.y = 0;
+    stick.style.transform = "translate(-50%, -50%)";
+  }
+
+  zona.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    if (idDedo !== null) return; // un solo dedo por zona
+    const t = Array.from(e.changedTouches)[0];
+    idDedo = t.identifier;
+    const r = zona.getBoundingClientRect();
+    base.style.left = (t.clientX - r.left) + "px";
+    base.style.top = (t.clientY - r.top) + "px";
+    moverStick(t);
+  }, { passive: false });
+
+  zona.addEventListener("touchmove", (e) => {
+    e.preventDefault();
+    for (const t of Array.from(e.changedTouches)) {
+      if (t.identifier === idDedo) moverStick(t);
+    }
+  }, { passive: false });
+
+  const finTacto = (e) => {
+    for (const t of Array.from(e.changedTouches)) {
+      if (t.identifier === idDedo) soltarStick();
+    }
+  };
+  zona.addEventListener("touchend", finTacto);
+  zona.addEventListener("touchcancel", finTacto);
+
+  const teclaEspacio = (tipo) =>
+    window.dispatchEvent(new KeyboardEvent(tipo, { code: "Space", bubbles: true, cancelable: true }));
+  btnSalto.addEventListener("touchstart", (e) => { e.preventDefault(); teclaEspacio("keydown"); }, { passive: false });
+  btnSalto.addEventListener("touchend", (e) => { e.preventDefault(); teclaEspacio("keyup"); }, { passive: false });
+  btnSalto.addEventListener("touchcancel", (e) => { e.preventDefault(); teclaEspacio("keyup"); }, { passive: false });
+}
+
+montarControlesTactiles();
+
+// Service Worker (PWA): cachea el juego para jugar sin conexión. Solo en https
+// o localhost, nunca con file://.
+if ("serviceWorker" in navigator && (location.protocol === "https:" || ["localhost", "127.0.0.1"].includes(location.hostname))) {
+  navigator.serviceWorker.register("./sw.js").catch(() => {});
+}
+</script>
+</body>
+</html>
