@@ -187,6 +187,13 @@
 
   #hud-nivel { color: var(--neon-cyan); }
   #hud-caidas { color: var(--neon-orange); }
+  #hud-tiempo { color: var(--neon-magenta); }
+
+  .hud-izquierda {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
 
   #hud-reiniciar, #hud-sound {
     pointer-events: auto;
@@ -198,6 +205,15 @@
   .hud-derecha {
     display: flex;
     align-items: center;
+  }
+
+  /* Móviles estrechos: el HUD completo (nivel, tiempo, caídas, orbes, 2 botones)
+     no cabe en una fila a 360px: compactar y dejar saltar a segunda línea.
+     IMPORTANTE: este bloque va DESPUÉS de las reglas base para ganar la cascada. */
+  @media (max-width: 520px) {
+    #hud { padding: 10px 12px; }
+    .hud-caja { font-size: 0.68rem; padding: 4px 8px; letter-spacing: 0.03em; }
+    #hud, .hud-derecha { flex-wrap: wrap; gap: 6px; }
   }
 
   #crosshair-ayuda {
@@ -281,14 +297,28 @@
     color: var(--neon-orange);
     margin: 10px 0 20px 0;
   }
+
+  /* Flash rojo al recibir un golpe de drone */
+  #flash-golpe {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 15; /* sobre el juego, por debajo de los overlays (20) */
+    background: radial-gradient(ellipse at center, rgba(255, 34, 68, 0) 40%, rgba(255, 34, 68, 0.55) 100%);
+    opacity: 0;
+  }
 </style>
 </head>
 <body>
 <div id="app"></div>
+<div id="flash-golpe"></div>
 
 <!-- HUD en juego -->
 <div id="hud">
-  <div class="hud-caja" id="hud-nivel">Nivel 1 / 17</div>
+  <div class="hud-izquierda">
+    <div class="hud-caja" id="hud-nivel">Nivel 1 / 17</div>
+    <div class="hud-caja" id="hud-tiempo">Tiempo: 0:00.0</div>
+  </div>
   <div class="hud-derecha">
     <div class="hud-caja" id="hud-caidas">Caídas: 0</div>
     <div class="hud-caja" id="hud-orbes">Orbes: 0 / 0</div>
@@ -324,6 +354,7 @@
 <div class="overlay hidden" id="pantalla-completado">
   <div class="panel">
     <h2 id="texto-nivel-superado">¡Nivel 1 superado!</h2>
+    <p class="instrucciones" id="texto-tiempo-nivel" style="margin-bottom: 10px;"></p>
     <p class="instrucciones">El portal te ha transportado al siguiente sector del laberinto.</p>
     <button class="boton-sci" id="btn-siguiente-nivel">Siguiente nivel</button>
   </div>
@@ -335,6 +366,7 @@
     <h2>¡Has completado el juego!</h2>
     <p class="stat-final" id="texto-caidas-final">Caídas totales: 0</p>
     <p class="stat-final" id="texto-orbes-final" style="margin: 0 0 20px 0; color: var(--neon-cyan);">Orbes totales: 0</p>
+    <p class="stat-final" id="texto-records-final" style="margin: 0 0 20px 0; color: var(--neon-magenta);">Récords: 0 / 17</p>
     <button class="boton-sci" id="btn-jugar-de-nuevo">Jugar de nuevo</button>
   </div>
 </div>
@@ -387,6 +419,7 @@ const CAMERA_DISTANCE = 7.5;        // Distancia base de la cámara (la órbita 
 
 const DEATH_Y = -10;                 // Por debajo de esta altura, se considera caída.
 const PORTAL_TRIGGER_DIST = 1.9;     // Distancia para activar el portal.
+const CELEBRACION_MS = 850;          // Duración de la celebración al tocar el portal.
 const FALLING_PLATFORM_SHAKE_TIME = 0.5; // Segundos temblando antes de caer.
 const FALLING_PLATFORM_GONE_Y = -14;     // Por debajo de esto, se oculta la plataforma caída.
 
@@ -409,18 +442,25 @@ const LEVELS = generarNiveles();
 const STORAGE_KEY = "robotLaberintoProgreso";
 
 function cargarProgreso() {
+  // Récords de mejor tiempo por nivel (segundos, 1 decimal; null = sin récord).
+  const recordsPorDefecto = () => new Array(LEVELS.length).fill(null);
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { maxNivel: 0, caidasTotales: 0, orbesTotales: 0, sonido: true };
+    if (!raw) return { maxNivel: 0, caidasTotales: 0, orbesTotales: 0, sonido: true, records: recordsPorDefecto() };
     const datos = JSON.parse(raw);
+    const records = Array.isArray(datos.records)
+      ? datos.records.slice(0, LEVELS.length).map((v) => (Number.isFinite(v) ? v : null))
+      : recordsPorDefecto();
+    while (records.length < LEVELS.length) records.push(null);
     return {
       maxNivel: Number.isFinite(datos.maxNivel) ? datos.maxNivel : 0,
       caidasTotales: Number.isFinite(datos.caidasTotales) ? datos.caidasTotales : 0,
       orbesTotales: Number.isFinite(datos.orbesTotales) ? datos.orbesTotales : 0,
       sonido: datos.sonido === false ? false : true,
+      records,
     };
   } catch (e) {
-    return { maxNivel: 0, caidasTotales: 0, orbesTotales: 0, sonido: true };
+    return { maxNivel: 0, caidasTotales: 0, orbesTotales: 0, sonido: true, records: recordsPorDefecto() };
   }
 }
 
@@ -437,16 +477,28 @@ const progreso = cargarProgreso();
 /* ------------------------------ Estado global --------------------------- */
 
 const gameState = {
-  fase: "inicio",        // 'inicio' | 'jugando' | 'nivel-completado' | 'final'
+  fase: "inicio",        // 'inicio' | 'jugando' | 'celebrando' | 'nivel-completado' | 'final'
   nivelIndex: 0,
   caidasSesion: 0,
   tiempoNivel: 0,         // tiempo acumulado del nivel actual (para plataformas móviles)
+  celebracionT: 0,        // segundos transcurridos de la celebración de portal
 };
 
 const input = {
   forward: false, backward: false, left: false, right: false, jump: false, restart: false,
   jumpQueuedAt: 0, // marca de tiempo del último flanco de subida de ESPACIO (buffer de salto)
 };
+
+// Cronómetro de récords: SOLO avanza en fase 'jugando' (la celebración lo
+// congela). Es independiente de gameState.tiempoNivel, que mueve las
+// plataformas móviles y se resetea en cada construirNivel igual que este.
+let cronometro = 0;
+
+function formatearTiempo(segundos) {
+  const s = Math.max(0, segundos);
+  const m = Math.floor(s / 60);
+  return `${m}:${(s - m * 60).toFixed(1).padStart(4, "0")}`;
+}
 
 window.addEventListener("keydown", (e) => {
   switch (e.code) {
@@ -484,8 +536,10 @@ const dom = {
   app: document.getElementById("app"),
   hud: document.getElementById("hud"),
   hudNivel: document.getElementById("hud-nivel"),
+  hudTiempo: document.getElementById("hud-tiempo"),
   hudCaidas: document.getElementById("hud-caidas"),
   hudOrbes: document.getElementById("hud-orbes"),
+  flashGolpe: document.getElementById("flash-golpe"),
   hudReiniciar: document.getElementById("hud-reiniciar"),
   hudSound: document.getElementById("hud-sound"),
   ayuda: document.getElementById("crosshair-ayuda"),
@@ -498,10 +552,12 @@ const dom = {
   pistaIos: document.getElementById("pista-ios"),
   pantallaCompletado: document.getElementById("pantalla-completado"),
   textoNivelSuperado: document.getElementById("texto-nivel-superado"),
+  textoTiempoNivel: document.getElementById("texto-tiempo-nivel"),
   btnSiguienteNivel: document.getElementById("btn-siguiente-nivel"),
   pantallaFinal: document.getElementById("pantalla-final"),
   textoCaidasFinal: document.getElementById("texto-caidas-final"),
   textoOrbesFinal: document.getElementById("texto-orbes-final"),
+  textoRecordsFinal: document.getElementById("texto-records-final"),
   btnJugarDeNuevo: document.getElementById("btn-jugar-de-nuevo"),
 };
 
@@ -702,7 +758,13 @@ function limpiarNivel() {
     });
   }
   currentRuntimePlatforms = [];
+  currentRuntimeDrones = [];
   portalRuntime = null;
+  invulnerableRestante = 0;
+  empujeRestante = 0;
+  parpadeoAcumulado = 0;
+  shakeCamara = 0;
+  player.bob.visible = true; // por si parpadeaba al cambiar de nivel
   limpiarParticulasFX();
   sombraSuave.visible = false;
 }
@@ -990,7 +1052,12 @@ renderer.domElement.addEventListener("wheel", (e) => {
 // su vida de 0.4 s aunque cambie el nivel; limpiarNivel las purga igualmente.
 const particulasFX = []; // [{ points, material, vida, total, velocidades }]
 
-function crearRafaga(n, color, origen, modo) {
+function crearRafaga(n, color, origen, modo, opciones) {
+  // opciones: { tamaño, vida } (por defecto 0.12 y 0.4 s, el comportamiento
+  // histórico del pool). Modos: "salto" (chorro abajo), "aterrizaje" (anillo
+  // expansivo) y "estela" (propulsor: deriva suave hacia abajo).
+  const tamano = opciones && opciones.tamano ? opciones.tamano : 0.12;
+  const vida = opciones && opciones.vida ? opciones.vida : 0.4;
   const positions = new Float32Array(n * 3);
   const velocidades = [];
   for (let i = 0; i < n; i++) {
@@ -1001,6 +1068,8 @@ function crearRafaga(n, color, origen, modo) {
     if (modo === "salto") {
       const r = 0.3 + Math.random() * 0.9;
       velocidades.push(new THREE.Vector3(Math.cos(ang) * r * 0.5, -1.5 - Math.random(), Math.sin(ang) * r * 0.5));
+    } else if (modo === "estela") {
+      velocidades.push(new THREE.Vector3((Math.random() - 0.5) * 0.4, -0.5 - Math.random() * 0.4, (Math.random() - 0.5) * 0.4));
     } else {
       const r = 1.4 + Math.random() * 1.4;
       velocidades.push(new THREE.Vector3(Math.cos(ang) * r, 0.25 + Math.random() * 0.6, Math.sin(ang) * r));
@@ -1009,13 +1078,13 @@ function crearRafaga(n, color, origen, modo) {
   const geom = new THREE.BufferGeometry();
   geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   const mat = new THREE.PointsMaterial({
-    color, size: 0.12, transparent: true, opacity: 0.9,
+    color, size: tamano, transparent: true, opacity: 0.9,
     blending: THREE.AdditiveBlending, depthWrite: false,
   });
   const points = new THREE.Points(geom, mat);
   points.frustumCulled = false;
   scene.add(points);
-  particulasFX.push({ points, material: mat, vida: 0, total: 0.4, velocidades });
+  particulasFX.push({ points, material: mat, vida: 0, total: vida, velocidades });
 }
 
 function actualizarParticulasFX(dt) {
@@ -1082,6 +1151,12 @@ function actualizarSombraSuave() {
 
 // Estado del frame anterior para detectar aterrizajes (efectos de impacto).
 let groundedAnterior = true;
+
+// Estela de propulsor: mientras el robot vuela se emiten partículas naranja y
+// cian bajo sus pies, a intervalos de ~45 ms para limitar los objetos vivos.
+let acumuladorEstela = 0;
+// Ráfagas de la celebración de portal (una cada 0.15 s).
+let acumuladorCelebracion = 0;
 
 /* ------------------------- Orbes de energía ---------------------------- */
 // Coleccionables por nivel: uno flotando ~1.1 sobre el centro de cada
@@ -1170,12 +1245,168 @@ function actualizarOrbes(dt) {
   }
 }
 
+/* ---------------------------- Drones enemigos ---------------------------- */
+// Drones de patrulla que vigilan plataformas estáticas y EMPUJAN al robot si
+// se acerca (no matan: el peligro es caerse del empujón). Deterministas por
+// nivel (semilla 5000 + índice): el nivel 10 siempre tiene sus 2 drones en
+// las mismas plataformas. Viven en enemigosGroup dentro de levelGroup, así
+// limpiarNivel purga sus geometrías y materiales.
+
+let enemigosGroup = null;
+let currentRuntimeDrones = []; // [{group, ojo, base, eje, amplitud, velocidad, fase}]
+let invulnerableRestante = 0;  // > 0: parpadeo del robot y sin colisiones
+let empujeRestante = 0;        // > 0: el input no pisa la velocidad del empujón
+let parpadeoAcumulado = 0;
+let shakeCamara = 0;           // sacudida de cámara al recibir un golpe
+
+function construirDrones(indiceNivel) {
+  enemigosGroup = new THREE.Group();
+  levelGroup.add(enemigosGroup);
+  currentRuntimeDrones = [];
+  invulnerableRestante = 0;
+  empujeRestante = 0;
+  parpadeoAcumulado = 0;
+  shakeCamara = 0;
+
+  // Cantidad: niveles 1-4 ninguno; 1 drone del nivel 5, 2 del 10, 3 del 15.
+  const nDrones = Math.min(3, Math.floor((indiceNivel + 1) / 5));
+  if (nDrones <= 0) return;
+
+  const rng = mulberry32Local(5000 + indiceNivel);
+  const datos = LEVELS[indiceNivel];
+
+  // Candidatas: plataformas estáticas, ni la primera (spawn) ni la última
+  // (la más cercana al portal), con lado utilizable para patrullar. Umbral
+  // 2.4 = mínimo del generador: en niveles de dificultad alta TODAS las
+  // plataformas son menores que 3.5 y un umbral alto dejaría el nivel sin
+  // drones (bug cazado en el test de frontera del nivel 15).
+  const candidatas = [];
+  for (let i = 1; i < datos.platforms.length - 1; i++) {
+    const p = datos.platforms[i];
+    if (p.type !== "static") continue;
+    if (Math.max(p.size[0], p.size[2]) >= 2.4) candidatas.push(i);
+  }
+  // Barajado determinista de las candidatas.
+  for (let i = candidatas.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [candidatas[i], candidatas[j]] = [candidatas[j], candidatas[i]];
+  }
+
+  for (let d = 0; d < nDrones && d < candidatas.length; d++) {
+    const reg = currentRuntimePlatforms[candidatas[d]];
+    if (!reg) continue;
+
+    // Eje de patrulla aleatorio; si el lado elegido es demasiado corto, se
+    // usa el largo (umbral de candidatas: lado >= 2.4).
+    let eje = rng() < 0.5 ? "x" : "z";
+    let dim = eje === "x" ? reg.data.size[0] : reg.data.size[2];
+    if (dim / 2 - 0.7 < 0.5) {
+      eje = eje === "x" ? "z" : "x";
+      dim = eje === "x" ? reg.data.size[0] : reg.data.size[2];
+    }
+    const amplitud = Math.max(0.5, dim / 2 - 0.7);
+    const velocidad = 0.8 + rng() * 0.5;
+    const fase = rng() * Math.PI * 2;
+    const top = reg.group.position.y + reg.data.size[1] / 2;
+
+    const grupo = new THREE.Group();
+    const cuerpo = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.28, 0),
+      new THREE.MeshStandardMaterial({ color: 0x33131f, metalness: 0.75, roughness: 0.35 })
+    );
+    const ojo = new THREE.Mesh(
+      new THREE.SphereGeometry(0.09, 10, 10),
+      new THREE.MeshStandardMaterial({ color: 0x220000, emissive: 0xff2244, emissiveIntensity: 2.5, roughness: 0.4 })
+    );
+    ojo.position.set(0, -0.08, 0.22);
+    const anillo = new THREE.Mesh(
+      new THREE.TorusGeometry(0.4, 0.03, 8, 24),
+      new THREE.MeshStandardMaterial({ color: 0x220000, emissive: 0xff2244, emissiveIntensity: 0.8, metalness: 0.3, roughness: 0.5 })
+    );
+    anillo.rotation.x = Math.PI / 2; // plano horizontal
+    grupo.add(cuerpo, ojo, anillo);
+    grupo.position.set(reg.group.position.x, top + 0.65, reg.group.position.z);
+    enemigosGroup.add(grupo);
+
+    currentRuntimeDrones.push({
+      group: grupo, ojo,
+      base: { x: reg.group.position.x, y: top + 0.65, z: reg.group.position.z },
+      eje, amplitud, velocidad, fase,
+    });
+  }
+}
+
+function actualizarDrones(dt) {
+  const t = gameState.tiempoNivel;
+  for (const d of currentRuntimeDrones) {
+    const offset = Math.sin(t * d.velocidad + d.fase) * d.amplitud;
+    if (d.eje === "x") d.group.position.x = d.base.x + offset;
+    else d.group.position.z = d.base.z + offset;
+    // Vaivén vertical suave y pulso del ojo.
+    d.group.position.y = d.base.y + Math.sin(t * 2.2 + d.fase) * 0.08;
+    d.ojo.material.emissiveIntensity = 2.5 + Math.sin(t * 6 + d.fase) * 0.8;
+    // Inclinación hacia el lado al que se mueve.
+    const velInst = Math.cos(t * d.velocidad + d.fase) * d.amplitud * d.velocidad;
+    if (d.eje === "x") d.group.rotation.z = THREE.MathUtils.clamp(-velInst * 0.06, -0.35, 0.35);
+    else d.group.rotation.x = THREE.MathUtils.clamp(velInst * 0.06, -0.35, 0.35);
+  }
+}
+
+function comprobarGolpeDrones(dt) {
+  // Parpadeo de invulnerabilidad (y sin colisiones mientras dura).
+  if (invulnerableRestante > 0) {
+    invulnerableRestante = Math.max(0, invulnerableRestante - dt);
+    parpadeoAcumulado += dt;
+    if (parpadeoAcumulado >= 0.1) {
+      parpadeoAcumulado = 0;
+      player.bob.visible = !player.bob.visible;
+    }
+    if (invulnerableRestante === 0) player.bob.visible = true;
+    return;
+  }
+  for (const d of currentRuntimeDrones) {
+    const dx = player.root.position.x - d.group.position.x;
+    const dz = player.root.position.z - d.group.position.z;
+    const distH = Math.hypot(dx, dz);
+    if (distH >= 0.8) continue;
+    if (Math.abs(d.group.position.y - (player.root.position.y + 0.8)) >= 1.1) continue;
+
+    // GOLPE: empuje horizontal + pequeño salto, invulnerabilidad, flash y sacudida.
+    let nx = 1, nz = 0;
+    if (distH > 0.0001) { nx = dx / distH; nz = dz / distH; }
+    player.velocity.x = nx * 7;
+    player.velocity.z = nz * 7;
+    player.velocity.y = 4.5;
+    player.grounded = false;
+    player.currentPlatform = null;
+    empujeRestante = 0.45;
+    invulnerableRestante = 1.2;
+    parpadeoAcumulado = 0;
+    shakeCamara = 0.15;
+    sonidos.golpe();
+    crearRafaga(8, 0xff2244, player.root.position.clone().add(new THREE.Vector3(0, 0.8, 0)), "aterrizaje");
+    // Flash rojo: aparece al instante y se apaga con transición CSS.
+    const flash = dom.flashGolpe;
+    if (flash) {
+      flash.style.transition = "none";
+      flash.style.opacity = "0.45";
+      requestAnimationFrame(() => {
+        flash.style.transition = "opacity 0.3s ease-out";
+        flash.style.opacity = "0";
+      });
+    }
+    break; // un solo golpe por frame
+  }
+}
+
 /* ------------------------- Sonido sintetizado --------------------------- */
 // WebAudio perezoso: el AudioContext se crea con el primer gesto del usuario
 // (política de autoplay de los navegadores). Todo va envuelto en try/catch:
 // un navegador sin audio o con audio bloqueado nunca rompe el juego.
 let audioCtx = null;
 let audioMaster = null;
+let musicaMaster = null;   // gain propio de la música (colgado de audioMaster)
+let musicaTimer = null;    // setInterval del scheduler de música
 
 function iniciarAudio() {
   try {
@@ -1189,6 +1420,10 @@ function iniciarAudio() {
     audioMaster = audioCtx.createGain();
     audioMaster.gain.value = 0.25;
     audioMaster.connect(audioCtx.destination);
+    musicaMaster = audioCtx.createGain();
+    musicaMaster.gain.value = progreso.sonido ? 0.5 : 0;
+    musicaMaster.connect(audioMaster);
+    iniciarMusica();
   } catch (e) {
     audioCtx = null;
     audioMaster = null;
@@ -1229,7 +1464,120 @@ const sonidos = {
     [523, 659, 784].forEach((f, i) => tono({ freq0: f, freq1: f, dur: 0.12, vol: 0.6, delay: i * 0.12 }));
   },
   caida: () => tono({ freq0: 300, freq1: 80, dur: 0.35, tipo: "sawtooth", vol: 0.5 }),
+  golpe: () => tono({ freq0: 160, freq1: 70, dur: 0.2, tipo: "sawtooth", vol: 0.6 }),
 };
+
+/* --------------------- Música ambiental sintetizada --------------------- */
+// Scheduler de 250 ms que programa notas POR ADELANTADO (horizonte 0.6 s) sobre
+// una rejilla de pasos de 0.25 s: bajo lento (una nota cada 2 compases de 2 s),
+// pad de acordes (Am, F, C, G; uno cada 8 s, dos osciladores triangle desafinados
+// ±4 cents a través de un lowpass 600 Hz) y arpegio suave de pentatónica menor
+// de A (una nota cada 0.75 s con probabilidad 0.6). No usa tono(): el pad
+// necesita sustain largo. Todo con guards: sin contexto o con Sonido en No no
+// se programa nada nuevo, y el juego nunca se rompe si el audio falla.
+
+function programarBajo(freq, t) {
+  try {
+    if (!audioCtx || !musicaMaster || !progreso.sonido) return;
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.22, t + 0.06);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 3.6);
+    osc.connect(g);
+    g.connect(musicaMaster);
+    osc.start(t);
+    osc.stop(t + 3.7);
+  } catch (e) {}
+}
+
+function programarPad(tonos, t, duracion) {
+  try {
+    if (!audioCtx || !musicaMaster || !progreso.sonido) return;
+    const filtro = audioCtx.createBiquadFilter();
+    filtro.type = "lowpass";
+    filtro.frequency.value = 600;
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.05, t + 1.2);   // ataque lento
+    g.gain.setValueAtTime(0.05, t + duracion);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + duracion + 1.8); // cola
+    filtro.connect(g);
+    g.connect(musicaMaster);
+    for (const tono of tonos) {
+      for (const cents of [-4, 4]) { // dos osciladores desafinados por nota
+        const osc = audioCtx.createOscillator();
+        osc.type = "triangle";
+        osc.frequency.value = tono;
+        osc.detune.value = cents;
+        osc.connect(filtro);
+        osc.start(t);
+        osc.stop(t + duracion + 2.0);
+      }
+    }
+  } catch (e) {}
+}
+
+function programarArpegio(freq, t) {
+  try {
+    if (!audioCtx || !musicaMaster || !progreso.sonido) return;
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.07, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+    osc.connect(g);
+    g.connect(musicaMaster);
+    osc.start(t);
+    osc.stop(t + 0.55);
+  } catch (e) {}
+}
+
+function iniciarMusica() {
+  try {
+    if (musicaTimer || !audioCtx) return;
+    const ACORDES = [
+      { bajo: 55.0, tonos: [220.0, 261.63, 329.63] },   // Am
+      { bajo: 87.31, tonos: [174.61, 220.0, 261.63] },  // F
+      { bajo: 65.41, tonos: [261.63, 329.63, 392.0] },  // C
+      { bajo: 98.0, tonos: [196.0, 246.94, 293.66] },  // G
+    ];
+    const PENTA = [220.0, 261.63, 293.66, 329.63, 392.0, 440.0]; // pentatónica menor de A
+    const DUR_PASO = 0.25;   // s por paso de la rejilla
+    const DUR_ACORDE = 8.0;  // un acorde cada 8 s
+    const DUR_BAJO = 4.0;    // una nota de bajo cada 2 compases (compás = 2 s)
+    const PASOS_ARPEGIO = 3; // una nota de arpegio cada 0.75 s
+    let t0 = audioCtx.currentTime + 0.1;
+    let paso = 0;            // índice absoluto del siguiente paso a programar
+
+    musicaTimer = setInterval(() => {
+      try {
+        if (!audioCtx || !musicaMaster) return;
+        const horizonte = audioCtx.currentTime + 0.6;
+        while (t0 + paso * DUR_PASO < horizonte) {
+          const t = t0 + paso * DUR_PASO;
+          const tRel = paso * DUR_PASO;
+          const idxAcorde = Math.floor(tRel / DUR_ACORDE) % ACORDES.length;
+          const dentroAcorde = tRel % DUR_ACORDE;
+          if (dentroAcorde < DUR_PASO) {
+            programarPad(ACORDES[idxAcorde].tonos, t, DUR_ACORDE);
+          }
+          if ((tRel % DUR_BAJO) < DUR_PASO) {
+            programarBajo(ACORDES[idxAcorde].bajo, t);
+          }
+          if (paso % PASOS_ARPEGIO === 0 && Math.random() < 0.6) {
+            programarArpegio(PENTA[Math.floor(Math.random() * PENTA.length)], t);
+          }
+          paso += 1;
+        }
+      } catch (e) {}
+    }, 250);
+  } catch (e) {}
+}
 
 function centrarYEscalarModelo(modelo) {
   const box = new THREE.Box3().setFromObject(modelo);
@@ -1301,11 +1649,14 @@ function construirNivel(indice) {
   limpiarNivel();
   gameState.nivelIndex = indice;
   gameState.tiempoNivel = 0;
+  cronometro = 0;
+  dom.hudTiempo.textContent = "Tiempo: 0:00.0";
 
   const datosNivel = LEVELS[indice];
   const bbox = construirPlataformas(datosNivel);
   crearPortal(datosNivel);
   construirOrbes(indice);
+  construirDrones(indice);
 
   // Ajustar el frustum de sombra de la luz direccional al tamaño real del nivel.
   // La luz es diagonal (+12,+22,+14), así que la Z del mundo también proyecta sobre
@@ -1453,6 +1804,10 @@ function actualizarJugador(dt) {
   // así respeta el gate del chase-cam y el resto de la física sin tocar nada más.
   const tv = window.__touchVec; if (tv) { moveDir.addScaledVector(forwardVec, tv.y); moveDir.addScaledVector(rightVec, tv.x); }
 
+  // Timer de empuje de drone (ver comprobarGolpeDrones): mientras dura, el
+  // input no sobreescribe la velocidad horizontal del empujón.
+  if (empujeRestante > 0) empujeRestante = Math.max(0, empujeRestante - dt);
+  const controlHabilitado = empujeRestante <= 0;
   let girando = 0;
   if (moveDir.lengthSq() > 0.0001) {
     moveDir.normalize();
@@ -1460,12 +1815,16 @@ function actualizarJugador(dt) {
     const yawAnterior = player.root.rotation.y;
     player.root.rotation.y = lerpAngulo(yawAnterior, targetYaw, 1 - Math.exp(-ROTATE_SPEED * dt));
     girando = lerpAngulo(0, ((player.root.rotation.y - yawAnterior + Math.PI) % (Math.PI * 2)) - Math.PI, 1) / dt;
-    player.velocity.x = moveDir.x * MOVE_SPEED;
-    player.velocity.z = moveDir.z * MOVE_SPEED;
+    if (controlHabilitado) {
+      player.velocity.x = moveDir.x * MOVE_SPEED;
+      player.velocity.z = moveDir.z * MOVE_SPEED;
+    }
     player.moving = true;
   } else {
-    player.velocity.x = 0;
-    player.velocity.z = 0;
+    if (controlHabilitado) {
+      player.velocity.x = 0;
+      player.velocity.z = 0;
+    }
     player.moving = false;
   }
 
@@ -1491,6 +1850,7 @@ function actualizarJugador(dt) {
       player.currentPlatform = null;
       input.jumpQueuedAt = 0;
       crearRafaga(14, 0x4cf3ff, player.root.position.clone(), "salto");
+      crearRafaga(6, 0xff8c42, player.root.position.clone(), "salto"); // impulso naranja extra
       sonidos.salto();
     } else if (performance.now() - input.jumpQueuedAt > 120) {
       input.jumpQueuedAt = 0; // el buffer caduca
@@ -1570,6 +1930,14 @@ function actualizarCamara(dt) {
 
   const t = 1 - Math.exp(-6 * dt);
   camera.position.lerp(posDeseada, t);
+  // Sacudida de cámara al recibir un golpe de drone: offset aleatorio pequeño
+  // que decae solo (lo dispara comprobarGolpeDrones con shakeCamara = 0.15).
+  if (shakeCamara > 0.002) {
+    camera.position.x += (Math.random() - 0.5) * 2 * shakeCamara;
+    camera.position.y += (Math.random() - 0.5) * 2 * shakeCamara;
+    camera.position.z += (Math.random() - 0.5) * 2 * shakeCamara;
+    shakeCamara = amortiguar(shakeCamara, 0, 8, dt);
+  }
   camera.lookAt(player.root.position.x, player.root.position.y + 1.1, player.root.position.z);
 }
 
@@ -1604,6 +1972,11 @@ function comprobarMuerte() {
     cameraYaw = Math.PI;
     orbit.yaw = 0;
     groundedAnterior = false;
+    // Fin del estado de golpe si estaba activo: el robot reaparece limpio.
+    invulnerableRestante = 0;
+    empujeRestante = 0;
+    parpadeoAcumulado = 0;
+    player.bob.visible = true;
     posicionarCamaraInstantanea();
   }
 }
@@ -1613,7 +1986,51 @@ function comprobarPortal() {
   const centroPortal = portalRuntime.group.position;
   const centroJugador = player.root.position.clone().add(new THREE.Vector3(0, 0.8, 0));
   const dist = centroJugador.distanceTo(centroPortal);
-  if (dist < PORTAL_TRIGGER_DIST) {
+  if (dist < PORTAL_TRIGGER_DIST && gameState.fase === "jugando") {
+    iniciarCelebracion();
+  }
+}
+
+// Celebración de portal: el robot gira y sube en parábola durante
+// CELEBRACION_MS mientras estallan partículas magenta; después aparece el
+// overlay de nivel superado. La física del jugador queda congelada (fase
+// 'celebrando') y los inputs de movimiento no tienen efecto.
+function iniciarCelebracion() {
+  gameState.fase = "celebrando";
+  // Si llegamos parpadeando por un golpe de drone, volver a ser visibles ya:
+  // el parpadeo no se procesa en esta fase y el robot celebraría invisible.
+  player.bob.visible = true;
+  gameState.celebracionT = 0;
+  acumuladorCelebracion = 0;
+  // El sonido de portal suena al EMPEZAR la celebración (antes estaba en
+  // completarNivel, que ahora llega 0.85 s después).
+  sonidos.portal();
+  // El cronómetro de récord ya se congela solo: solo avanza en fase 'jugando'.
+}
+
+function actualizarCelebracion(dt) {
+  gameState.celebracionT += dt;
+  const progresoCeleb = Math.min(1, (gameState.celebracionT * 1000) / CELEBRACION_MS);
+  player.bob.rotation.y += dt * 10;
+  player.bob.position.y = Math.sin(progresoCeleb * Math.PI) * 0.9;
+  acumuladorCelebracion += dt;
+  if (acumuladorCelebracion >= 0.15) {
+    acumuladorCelebracion = 0;
+    crearRafaga(6, 0xff4cf0, player.root.position.clone().add(new THREE.Vector3(0, 0.8, 0)), "aterrizaje");
+    if (portalRuntime) {
+      crearRafaga(6, 0xff4cf0, portalRuntime.group.position.clone(), "aterrizaje");
+    }
+  }
+  // La escena sigue viva: plataformas, drones, cámara y portal se animan.
+  actualizarPlataformas(dt);
+  actualizarDrones(dt);
+  actualizarCamara(dt);
+  actualizarPortal(dt);
+  if (progresoCeleb >= 1) {
+    // Restaurar a mano la pose del robot (la física no corre durante la
+    // celebración y el siguiente nivel no siempre reconstruye la pose).
+    player.bob.rotation.y = 0;
+    player.bob.position.y = 0;
     completarNivel();
   }
 }
@@ -1642,21 +2059,36 @@ function iniciarJuegoDesdeNivel(indice) {
 
 function completarNivel() {
   gameState.fase = "nivel-completado";
+  reinicioArmado = false; // por si R se mantuvo durante la celebración/overlay
   const esUltimo = gameState.nivelIndex >= LEVELS.length - 1;
+
+  // Récord de mejor tiempo del nivel (congelado al empezar la celebración).
+  const tiempo = cronometro;
+  const recordPrevio = progreso.records[gameState.nivelIndex] ?? null;
+  let nuevoRecord = false;
+  if (recordPrevio === null || tiempo < recordPrevio) {
+    progreso.records[gameState.nivelIndex] = Math.round(tiempo * 10) / 10;
+    nuevoRecord = true;
+  }
 
   progreso.maxNivel = Math.max(progreso.maxNivel, gameState.nivelIndex + 1);
   progreso.orbesTotales += orbesRecogidosNivel;
   guardarProgreso(progreso);
-  sonidos.portal();
+  // (El sonido de portal suena en iniciarCelebracion, no aquí.)
 
   if (esUltimo) {
     dom.textoCaidasFinal.textContent = `Caídas totales: ${progreso.caidasTotales}`;
     dom.textoOrbesFinal.textContent = `Orbes totales: ${progreso.orbesTotales}`;
+    const recordsConseguidos = progreso.records.filter((r) => r !== null).length;
+    dom.textoRecordsFinal.textContent = `Récords: ${recordsConseguidos} / ${LEVELS.length}`;
     mostrar(dom.pantallaFinal);
     dom.hud.classList.remove("visible");
     dom.ayuda.classList.remove("visible");
   } else {
     dom.textoNivelSuperado.textContent = `¡${LEVELS[gameState.nivelIndex].nombre} superado!`;
+    dom.textoTiempoNivel.textContent = nuevoRecord
+      ? `Tiempo: ${formatearTiempo(tiempo)} · ¡Nuevo récord!`
+      : `Tiempo: ${formatearTiempo(tiempo)} · Mejor: ${formatearTiempo(progreso.records[gameState.nivelIndex])}`;
     mostrar(dom.pantallaCompletado);
   }
 }
@@ -1702,6 +2134,10 @@ dom.hudSound.addEventListener("click", () => {
   progreso.sonido = !progreso.sonido;
   guardarProgreso(progreso);
   if (progreso.sonido) iniciarAudio();
+  // Acallar (o reactivar) al instante las colas de música ya programadas.
+  if (musicaMaster) {
+    try { musicaMaster.gain.value = progreso.sonido ? 0.5 : 0; } catch (e) {}
+  }
   actualizarHudSonido();
 });
 
@@ -1753,14 +2189,39 @@ function animar() {
       reinicioArmado = true;
     }
 
+    // El cronómetro de récords solo corre jugando (R lo resetea vía construirNivel;
+    // morir NO lo resetea: caerse penaliza el tiempo).
+    cronometro += dt;
+    dom.hudTiempo.textContent = `Tiempo: ${formatearTiempo(cronometro)}`;
+
     actualizarPlataformas(dt);
     actualizarJugador(dt);
     actualizarCamara(dt);
     actualizarPortal(dt);
     actualizarOrbes(dt);
+    actualizarDrones(dt);
+    comprobarGolpeDrones(dt);
     actualizarSombraSuave();
     comprobarMuerte();
     comprobarPortal();
+
+    // Estela de propulsor mientras el robot vuela (partículas naranja/cian a
+    // ~22 Hz bajo sus pies; el pool FX las apaga a los 0.45 s).
+    if (!player.grounded) {
+      acumuladorEstela += dt;
+      if (acumuladorEstela >= 0.045) {
+        acumuladorEstela = 0;
+        crearRafaga(2, Math.random() < 0.5 ? 0xff8c42 : 0x4cf3ff, {
+          x: player.root.position.x + (Math.random() - 0.5) * 0.2,
+          y: player.root.position.y + 0.25,
+          z: player.root.position.z + (Math.random() - 0.5) * 0.2,
+        }, "estela", { tamano: 0.07, vida: 0.45 });
+      }
+    } else {
+      acumuladorEstela = 0;
+    }
+  } else if (gameState.fase === "celebrando") {
+    actualizarCelebracion(dt);
   }
 
   actualizarParticulasFX(dt); // las ráfagas terminan su vida aunque haya overlay
@@ -1807,10 +2268,17 @@ if (new URLSearchParams(location.search).has("debug")) {
     camara: camera,
     getCameraYaw: () => cameraYaw,
     getOrbitYaw: () => orbit.yaw,
+    orbit: () => ({ yaw: orbit.yaw, pitch: orbit.pitch, dist: orbit.dist }),
+    particulas: () => particulasFX.length,
+    fase: () => gameState.fase,
     bloom: () => bloomPass?.enabled,
     bloomFuerza: (v) => { if (bloomPass) bloomPass.strength = v; },
     fps: () => mediaDtMs,
     orbes: () => ({ recogidos: orbesRecogidosNivel, total: orbesRuntime.length }),
+    drones: () => currentRuntimeDrones.map((d) => ({
+      x: +d.group.position.x.toFixed(2), y: +d.group.position.y.toFixed(2), z: +d.group.position.z.toFixed(2),
+    })),
+    musica: () => ({ activa: !!musicaTimer, ctx: audioCtx ? audioCtx.state : "sin-contexto" }),
     portal: () => portalRuntime ? { x: portalRuntime.group.position.x, y: portalRuntime.group.position.y, z: portalRuntime.group.position.z } : null,
     plataformas: () => currentRuntimePlatforms.map((r) => ({
       type: r.data.type, state: r.state,
@@ -1906,34 +2374,70 @@ function montarControlesTactiles() {
 
   // Dedo de cámara: cualquier toque que NO caiga en la zona del joystick ni en
   // el botón SALTAR orbita la cámara (típicamente la mitad derecha o superior).
-  // Convive con el joystick: cada control guarda su propio identificador de dedo.
+  // Con DOS dedos de cámara se entra en modo pinza: separar los dedos acerca
+  // la cámara (zoom in estándar, orbit.dist = dist * distAnterior/distActual)
+  // y juntarlos la aleja. Durante la pinza NO se rota. Si uno de los dos dedos
+  // se levanta, termina el gesto completo (sin saltos al reanudar con un dedo).
+  // Convive con el joystick: cada control guarda su propio identificador.
   const esDeControles = (el) => !!(el && (el === zona || zona.contains(el) || el === btnSalto || btnSalto.contains(el)));
+  let dedoCam2 = null; // { id, x, y } segundo dedo de cámara (modo pinza)
+  let distPinzaAnterior = 0;
+
   window.addEventListener("touchstart", (e) => {
-    if (orbit.idDedo !== null) return; // un solo dedo de cámara
-    const t = Array.from(e.changedTouches)[0];
-    if (!t || esDeControles(t.target)) return;
-    orbit.idDedo = t.identifier;
-    orbit.arrastrando = true;
-    orbit.xAnt = t.clientX;
-    orbit.yAnt = t.clientY;
-  }, { passive: true });
-  window.addEventListener("touchmove", (e) => {
-    if (orbit.idDedo === null) return;
     for (const t of Array.from(e.changedTouches)) {
-      if (t.identifier !== orbit.idDedo) continue;
-      const dx = t.clientX - orbit.xAnt;
-      const dy = t.clientY - orbit.yAnt;
-      orbit.xAnt = t.clientX;
-      orbit.yAnt = t.clientY;
-      orbit.yaw -= dx * 0.006;
-      orbit.pitch = THREE.MathUtils.clamp(orbit.pitch + dy * 0.004, -0.10, 1.15);
+      if (esDeControles(t.target)) continue;
+      if (orbit.idDedo === null) {
+        orbit.idDedo = t.identifier;
+        orbit.arrastrando = true;
+        orbit.xAnt = t.clientX;
+        orbit.yAnt = t.clientY;
+      } else if (dedoCam2 === null && t.identifier !== orbit.idDedo) {
+        dedoCam2 = { id: t.identifier, x: t.clientX, y: t.clientY };
+        // Distancia inicial de la pinza entre los dos dedos.
+        distPinzaAnterior = Math.hypot(dedoCam2.x - orbit.xAnt, dedoCam2.y - orbit.yAnt);
+      }
     }
   }, { passive: true });
-  const soltarDedoCamara = (e) => {
-    if (orbit.idDedo === null) return;
+
+  window.addEventListener("touchmove", (e) => {
+    if (orbit.idDedo === null && dedoCam2 === null) return;
+    // Actualizar posiciones guardadas y calcular el delta del dedo principal.
+    let dx1 = 0, dy1 = 0;
     for (const t of Array.from(e.changedTouches)) {
       if (t.identifier === orbit.idDedo) {
+        dx1 = t.clientX - orbit.xAnt;
+        dy1 = t.clientY - orbit.yAnt;
+        orbit.xAnt = t.clientX;
+        orbit.yAnt = t.clientY;
+      } else if (dedoCam2 && t.identifier === dedoCam2.id) {
+        dedoCam2.x = t.clientX;
+        dedoCam2.y = t.clientY;
+      }
+    }
+    if (orbit.idDedo !== null && dedoCam2 !== null) {
+      // MODO PINZA: solo zoom, nunca rotación con la pinza activa.
+      const dist = Math.hypot(dedoCam2.x - orbit.xAnt, dedoCam2.y - orbit.yAnt);
+      if (dist > 1 && distPinzaAnterior > 1) {
+        orbit.dist = THREE.MathUtils.clamp(orbit.dist * (distPinzaAnterior / dist), 4.5, 12);
+      }
+      distPinzaAnterior = dist;
+      return;
+    }
+    if (orbit.idDedo !== null) {
+      // Arrastre de un dedo: órbita manual.
+      orbit.yaw -= dx1 * 0.006;
+      orbit.pitch = THREE.MathUtils.clamp(orbit.pitch + dy1 * 0.004, -0.10, 1.15);
+    }
+  }, { passive: true });
+
+  const soltarDedoCamara = (e) => {
+    if (orbit.idDedo === null && dedoCam2 === null) return;
+    for (const t of Array.from(e.changedTouches)) {
+      if (t.identifier === orbit.idDedo || (dedoCam2 && t.identifier === dedoCam2.id)) {
+        // Al levantar CUALQUIERA de los dedos de cámara termina el gesto
+        // completo (drag o pinza): evita saltos al quedar un solo dedo.
         orbit.idDedo = null;
+        dedoCam2 = null;
         orbit.arrastrando = false;
       }
     }
