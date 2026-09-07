@@ -30,6 +30,7 @@
     font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     color: #eaf6ff;
     user-select: none;
+    touch-action: none; /* el arrastre táctil orbita la cámara: nunca hacer scroll */
   }
 
   #app {
@@ -43,6 +44,7 @@
     display: block;
     width: 100%;
     height: 100%;
+    touch-action: none;
   }
 
   /* ---------- Paneles de superposición genéricos ---------- */
@@ -186,7 +188,7 @@
   #hud-nivel { color: var(--neon-cyan); }
   #hud-caidas { color: var(--neon-orange); }
 
-  #hud-reiniciar {
+  #hud-reiniciar, #hud-sound {
     pointer-events: auto;
     margin-left: 10px;
     font-size: 0.75rem;
@@ -289,7 +291,9 @@
   <div class="hud-caja" id="hud-nivel">Nivel 1 / 17</div>
   <div class="hud-derecha">
     <div class="hud-caja" id="hud-caidas">Caídas: 0</div>
+    <div class="hud-caja" id="hud-orbes">Orbes: 0 / 0</div>
     <button class="boton-sci hud-caja" id="hud-reiniciar" title="Reiniciar nivel actual">Reiniciar (R)</button>
+    <button class="boton-sci hud-caja" id="hud-sound" title="Activar o silenciar el sonido">Sonido: Sí</button>
   </div>
 </div>
 <div id="crosshair-ayuda">Flechas / WASD: mover · ESPACIO: saltar · R: reiniciar nivel</div>
@@ -330,6 +334,7 @@
   <div class="panel">
     <h2>¡Has completado el juego!</h2>
     <p class="stat-final" id="texto-caidas-final">Caídas totales: 0</p>
+    <p class="stat-final" id="texto-orbes-final" style="margin: 0 0 20px 0; color: var(--neon-cyan);">Orbes totales: 0</p>
     <button class="boton-sci" id="btn-jugar-de-nuevo">Jugar de nuevo</button>
   </div>
 </div>
@@ -346,6 +351,13 @@
 <script type="module">
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { FXAAShader } from "three/addons/shaders/FXAAShader.js";
 import { generarNiveles } from "./levels.js";
 
 /* =========================================================================
@@ -371,10 +383,7 @@ const MOVE_SPEED = 6;               // Velocidad horizontal de desplazamiento.
 const PLAYER_RADIUS = 0.55;         // Radio horizontal aproximado del robot (para colisiones).
 const ROTATE_SPEED = 9;             // Suavizado de rotación del robot hacia la dirección de movimiento.
 const CAMERA_YAW_LAG = 3.2;         // Suavizado del yaw de cámara respecto al del robot.
-const CAMERA_DISTANCE = 7.5;
-const CAMERA_HEIGHT = 3.4;
-const CAMERA_LOOK_AHEAD = 2.2;
-const CAMERA_LOOK_HEIGHT = 1.1;
+const CAMERA_DISTANCE = 7.5;        // Distancia base de la cámara (la órbita puede hacer zoom 4.5..12).
 
 const DEATH_Y = -10;                 // Por debajo de esta altura, se considera caída.
 const PORTAL_TRIGGER_DIST = 1.9;     // Distancia para activar el portal.
@@ -402,14 +411,16 @@ const STORAGE_KEY = "robotLaberintoProgreso";
 function cargarProgreso() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { maxNivel: 0, caidasTotales: 0 };
+    if (!raw) return { maxNivel: 0, caidasTotales: 0, orbesTotales: 0, sonido: true };
     const datos = JSON.parse(raw);
     return {
       maxNivel: Number.isFinite(datos.maxNivel) ? datos.maxNivel : 0,
       caidasTotales: Number.isFinite(datos.caidasTotales) ? datos.caidasTotales : 0,
+      orbesTotales: Number.isFinite(datos.orbesTotales) ? datos.orbesTotales : 0,
+      sonido: datos.sonido === false ? false : true,
     };
   } catch (e) {
-    return { maxNivel: 0, caidasTotales: 0 };
+    return { maxNivel: 0, caidasTotales: 0, orbesTotales: 0, sonido: true };
   }
 }
 
@@ -474,7 +485,9 @@ const dom = {
   hud: document.getElementById("hud"),
   hudNivel: document.getElementById("hud-nivel"),
   hudCaidas: document.getElementById("hud-caidas"),
+  hudOrbes: document.getElementById("hud-orbes"),
   hudReiniciar: document.getElementById("hud-reiniciar"),
+  hudSound: document.getElementById("hud-sound"),
   ayuda: document.getElementById("crosshair-ayuda"),
   pantallaInicio: document.getElementById("pantalla-inicio"),
   btnJugar: document.getElementById("btn-jugar"),
@@ -488,6 +501,7 @@ const dom = {
   btnSiguienteNivel: document.getElementById("btn-siguiente-nivel"),
   pantallaFinal: document.getElementById("pantalla-final"),
   textoCaidasFinal: document.getElementById("texto-caidas-final"),
+  textoOrbesFinal: document.getElementById("texto-orbes-final"),
   btnJugarDeNuevo: document.getElementById("btn-jugar-de-nuevo"),
 };
 
@@ -507,8 +521,16 @@ const camera = new THREE.PerspectiveCamera(
   62, window.innerWidth / window.innerHeight, 0.1, 500
 );
 
+// Calidad gráfica: ?calidad=alta|baja fuerza el modo. Por defecto el bloom se
+// activa en escritorio y se apaga en pantallas táctiles (móvil), donde además
+// se limita el pixelRatio para mantener fps.
+const paramsCalidad = new URLSearchParams(location.search);
+const esPantallaTactil = matchMedia("(pointer: coarse)").matches;
+const CALIDAD_FORZADA = paramsCalidad.get("calidad");
+let bloomActivo = CALIDAD_FORZADA === "alta" ? true : CALIDAD_FORZADA === "baja" ? false : !esPantallaTactil;
+
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(esPantallaTactil ? Math.min(window.devicePixelRatio, 1.5) : Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -517,18 +539,47 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 dom.app.appendChild(renderer.domElement);
 
-// Fondo degradado (vacío sci-fi) + niebla.
+// Cadena de postproceso: render + bloom neón + salida (tonemapping/sRGB) + FXAA.
+// El bloom se puede desactivar por calidad o por el vigilante de fps de animar().
+const composer = new EffectComposer(renderer);
+const renderPass = new RenderPass(scene, camera);
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.2, 0.85, 0.5);
+const outputPass = new OutputPass();
+const fxaaPass = new ShaderPass(FXAAShader);
+composer.addPass(renderPass);
+composer.addPass(bloomPass);
+composer.addPass(outputPass);
+composer.addPass(fxaaPass);
+if (!bloomActivo) bloomPass.enabled = false;
+
+function ajustarResolucionFXAA() {
+  const pr = renderer.getPixelRatio();
+  fxaaPass.material.uniforms.resolution.value.set(1 / (window.innerWidth * pr), 1 / (window.innerHeight * pr));
+}
+ajustarResolucionFXAA();
+
+// Fondo: nebulosa procedural (degradado casi negro + manchas radiales).
 function crearTexturaGradiente() {
   const canvas = document.createElement("canvas");
-  canvas.width = 8;
-  canvas.height = 256;
+  canvas.width = 512;
+  canvas.height = 512;
   const ctx = canvas.getContext("2d");
-  const grad = ctx.createLinearGradient(0, 0, 0, 256);
+  const grad = ctx.createLinearGradient(0, 0, 0, 512);
   grad.addColorStop(0, "#0a0620");
   grad.addColorStop(0.45, "#0a0e2a");
   grad.addColorStop(1, "#020208");
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 8, 256);
+  ctx.fillRect(0, 0, 512, 512);
+  const mancha = (x, y, r, color, alfa) => {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, color.replace("ALFA", alfa));
+    g.addColorStop(1, color.replace("ALFA", "0"));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 512, 512);
+  };
+  mancha(120, 150, 260, "rgba(42,16,85,ALFA)", "0.55");  // morado profundo
+  mancha(400, 320, 300, "rgba(10,26,74,ALFA)", "0.5");   // azul
+  mancha(260, 470, 220, "rgba(64,180,220,ALFA)", "0.12"); // cian muy tenue
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
@@ -562,6 +613,55 @@ function crearEstrellas() {
 }
 crearEstrellas();
 
+// Rocas flotantes de decoración: anillo lejano de asteroides facetados que
+// giran lentamente. Viven fuera de levelGroup, se crean una sola vez.
+const decoracionRocas = [];
+function crearDecoracion() {
+  for (let i = 0; i < 24; i++) {
+    const geo = new THREE.IcosahedronGeometry(0.6 + Math.random() * 2.2, 0);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x1a1f2e, flatShading: true, roughness: 0.9, metalness: 0.1 });
+    const roca = new THREE.Mesh(geo, mat);
+    const ang = (i / 24) * Math.PI * 2 + Math.random() * 0.5;
+    const dist = 28 + Math.random() * 32;
+    roca.position.set(Math.cos(ang) * dist, -6 + Math.random() * 16, Math.sin(ang) * dist);
+    roca.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+    scene.add(roca);
+    decoracionRocas.push({ mesh: roca, vel: new THREE.Vector3((Math.random() - 0.5) * 0.15, (Math.random() - 0.5) * 0.1, (Math.random() - 0.5) * 0.15) });
+  }
+}
+crearDecoracion();
+
+// Polvo ambiental: motas cian a la deriva ascendente en una caja alrededor
+// del jugador (sigue su x/z). Barato: 260 puntos actualizados por frame.
+const POLVO_N = 260;
+const polvoGeom = new THREE.BufferGeometry();
+{
+  const pos = new Float32Array(POLVO_N * 3);
+  for (let i = 0; i < POLVO_N; i++) {
+    pos[i * 3] = (Math.random() - 0.5) * 50;
+    pos[i * 3 + 1] = Math.random() * 14;
+    pos[i * 3 + 2] = (Math.random() - 0.5) * 70;
+  }
+  polvoGeom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+}
+const polvoAmbiental = new THREE.Points(polvoGeom, new THREE.PointsMaterial({
+  color: 0x4cf3ff, size: 0.05, transparent: true, opacity: 0.35,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+}));
+polvoAmbiental.frustumCulled = false;
+scene.add(polvoAmbiental);
+
+function actualizarPolvo(dt) {
+  const attr = polvoAmbiental.geometry.attributes.position;
+  const arr = attr.array;
+  for (let i = 0; i < POLVO_N; i++) {
+    arr[i * 3 + 1] += dt * 0.25;
+    if (arr[i * 3 + 1] > 14) arr[i * 3 + 1] -= 14;
+  }
+  attr.needsUpdate = true;
+  polvoAmbiental.position.set(player.root.position.x, 0, player.root.position.z);
+}
+
 // Iluminación.
 const luzAmbiente = new THREE.AmbientLight(0x2a3a66, 0.75);
 scene.add(luzAmbiente);
@@ -593,20 +693,112 @@ function limpiarNivel() {
     hijo.traverse((obj) => {
       if (obj.geometry) obj.geometry.dispose();
       if (obj.material) {
-        if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
-        else obj.material.dispose();
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const m of mats) {
+          if (m.map) m.map.dispose(); // texturas clonadas por plataforma
+          m.dispose();
+        }
       }
     });
   }
   currentRuntimePlatforms = [];
   portalRuntime = null;
+  limpiarParticulasFX();
+  sombraSuave.visible = false;
 }
 
-function crearMallaPlataforma(size, colorBorde) {
+// Textura superior procedural por tipo: panel sci-fi (rejilla + tornillos)
+// con variantes: franjas de advertencia para las que caen y chevrons para las
+// móviles. Se crea una vez por tipo y se CLONA por plataforma para ajustar el
+// repeat a su tamaño (el clone comparte la imagen: barato).
+const texturasPlataformaBase = {};
+
+function crearTexturaPlataforma(tipo, colorBorde) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#141a30";
+  ctx.fillRect(0, 0, 256, 256);
+  const colorCss = "#" + new THREE.Color(colorBorde).getHexString();
+
+  if (tipo === "falling") {
+    // Franjas diagonales de advertencia amarillo/rosa.
+    ctx.save();
+    ctx.strokeStyle = "rgba(255, 214, 90, 0.8)";
+    ctx.lineWidth = 16;
+    for (let d = -256; d < 512; d += 56) {
+      ctx.beginPath();
+      ctx.moveTo(d, 0);
+      ctx.lineTo(d + 256, 256);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = "rgba(255, 77, 109, 0.5)";
+    ctx.lineWidth = 6;
+    for (let d = -228; d < 512; d += 56) {
+      ctx.beginPath();
+      ctx.moveTo(d, 0);
+      ctx.lineTo(d + 256, 256);
+      ctx.stroke();
+    }
+    ctx.restore();
+  } else if (tipo === "moving") {
+    // Chevrons apuntando a la dirección de avance del eje.
+    ctx.fillStyle = colorCss;
+    ctx.globalAlpha = 0.5;
+    for (let k = 0; k < 2; k++) {
+      const off = 20 + k * 128;
+      ctx.beginPath();
+      ctx.moveTo(off + 34, 30);
+      ctx.lineTo(off + 90, 128);
+      ctx.lineTo(off + 34, 226);
+      ctx.lineTo(off + 4, 226);
+      ctx.lineTo(off + 60, 128);
+      ctx.lineTo(off + 4, 30);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Rejilla sci-fi fina.
+  ctx.strokeStyle = colorCss;
+  ctx.globalAlpha = 0.45;
+  ctx.lineWidth = 2;
+  for (let g = 0; g <= 256; g += 32) {
+    ctx.beginPath(); ctx.moveTo(g, 0); ctx.lineTo(g, 256); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, g); ctx.lineTo(256, g); ctx.stroke();
+  }
+  // Tornillos en las esquinas de cada celda grande (64 px).
+  ctx.globalAlpha = 0.7;
+  ctx.fillStyle = colorCss;
+  for (let x = 16; x < 256; x += 64) {
+    for (let y = 16; y < 256; y += 64) {
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function crearMallaPlataforma(size, colorBorde, tipo) {
   const grupo = new THREE.Group();
-  const geometria = new THREE.BoxGeometry(size[0], size[1], size[2]);
+  const geometria = new RoundedBoxGeometry(size[0], size[1], size[2], 3, 0.12);
+
+  if (!texturasPlataformaBase[tipo]) texturasPlataformaBase[tipo] = crearTexturaPlataforma(tipo, colorBorde);
+  const textura = texturasPlataformaBase[tipo].clone();
+  textura.needsUpdate = true;
+  textura.repeat.set(Math.max(1, Math.round(size[0] / 2)), Math.max(1, Math.round(size[2] / 2)));
+
   const material = new THREE.MeshStandardMaterial({
-    color: 0x141a30,
+    color: 0xffffff, // el color base lo aporta la textura
+    map: textura,
     metalness: 0.35,
     roughness: 0.55,
     emissive: new THREE.Color(colorBorde).multiplyScalar(0.05),
@@ -616,11 +808,17 @@ function crearMallaPlataforma(size, colorBorde) {
   caja.receiveShadow = true;
   grupo.add(caja);
 
-  // Bordes brillantes (aspecto de rejilla sci-fi).
-  const bordes = new THREE.EdgesGeometry(geometria);
+  // Bordes brillantes (contorno limpio: caja exacta, no el chaflán redondeado).
+  const bordes = new THREE.EdgesGeometry(new THREE.BoxGeometry(size[0], size[1], size[2]));
   const materialBordes = new THREE.LineBasicMaterial({ color: colorBorde, transparent: true, opacity: 0.9 });
-  const lineas = new THREE.LineSegments(bordes, materialBordes);
-  grupo.add(lineas);
+  grupo.add(new THREE.LineSegments(bordes, materialBordes));
+
+  // Refuerzo de borde: segunda caja wireframe un 2% mayor, muy tenue.
+  const bordes2 = new THREE.EdgesGeometry(
+    new THREE.BoxGeometry(size[0] * 1.02, size[1] * 1.02, size[2] * 1.02)
+  );
+  const materialBordes2 = new THREE.LineBasicMaterial({ color: colorBorde, transparent: true, opacity: 0.25 });
+  grupo.add(new THREE.LineSegments(bordes2, materialBordes2));
 
   // Panel superior ligeramente emisivo para reforzar el look "grid".
   const panel = new THREE.Mesh(
@@ -631,7 +829,7 @@ function crearMallaPlataforma(size, colorBorde) {
   panel.position.y = size[1] / 2 + 0.01;
   grupo.add(panel);
 
-  return grupo;
+  return { grupo, material };
 }
 
 function construirPlataformas(datosNivel) {
@@ -639,13 +837,14 @@ function construirPlataformas(datosNivel) {
 
   for (const data of datosNivel.platforms) {
     const color = PLATFORM_COLORS[data.type] || PLATFORM_COLORS.static;
-    const grupo = crearMallaPlataforma(data.size, color);
+    const { grupo, material } = crearMallaPlataforma(data.size, color, data.type);
     grupo.position.set(data.pos[0], data.pos[1], data.pos[2]);
     levelGroup.add(grupo);
 
     const registro = {
       data,
       group: grupo,
+      material, // para animar el pulso emisivo al temblar
       base: { x: data.pos[0], y: data.pos[1], z: data.pos[2] },
       // Estado de plataformas 'falling': 'idle' | 'shaking' | 'falling' | 'gone'.
       state: "idle",
@@ -744,6 +943,294 @@ scene.add(player.root);
 
 let cameraYaw = 0;
 
+// Cámara orbitable manual (estilo Mario 64): offset de yaw que el jugador
+// añade arrastrando con ratón o dedo, pitch de órbita y distancia de zoom.
+// El yaw vuelve solo detrás del robot al avanzar; en reposo o retrocediendo
+// la vista se queda donde el jugador la dejó.
+const orbit = { yaw: 0, pitch: 0.32, dist: CAMERA_DISTANCE, arrastrando: false, arrastrandoRaton: false, idDedo: null, xAnt: 0, yAnt: 0 };
+
+// Arrastre con ratón sobre el lienzo: orbita la cámara. (Solo puntero de
+// ratón: en táctil se usa el dedo de cámara de montarControlesTactiles y
+// así no se procesa dos veces el mismo gesto.)
+renderer.domElement.addEventListener("pointerdown", (e) => {
+  if (e.pointerType !== "mouse" || e.button !== 0 || e.target !== renderer.domElement) return;
+  orbit.arrastrando = true;
+  orbit.arrastrandoRaton = true; // flag propio: un drag táctil activo no debe recibir deltas de ratón
+  orbit.xAnt = e.clientX;
+  orbit.yAnt = e.clientY;
+  renderer.domElement.style.cursor = "grabbing";
+});
+window.addEventListener("pointermove", (e) => {
+  if (!orbit.arrastrandoRaton || e.pointerType !== "mouse") return;
+  const dx = e.clientX - orbit.xAnt;
+  const dy = e.clientY - orbit.yAnt;
+  orbit.xAnt = e.clientX;
+  orbit.yAnt = e.clientY;
+  orbit.yaw -= dx * 0.005;
+  orbit.pitch = THREE.MathUtils.clamp(orbit.pitch + dy * 0.004, -0.10, 1.15);
+});
+const finArrastreRaton = () => {
+  if (!orbit.arrastrandoRaton) return;
+  orbit.arrastrandoRaton = false;
+  if (orbit.idDedo === null) orbit.arrastrando = false;
+  renderer.domElement.style.cursor = "";
+};
+window.addEventListener("pointerup", finArrastreRaton);
+window.addEventListener("pointercancel", finArrastreRaton);
+
+// Zoom con rueda sobre el lienzo.
+renderer.domElement.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  orbit.dist = THREE.MathUtils.clamp(orbit.dist + e.deltaY * 0.005, 4.5, 12);
+}, { passive: false });
+
+/* ------------------------ Efectos: partículas FX ------------------------ */
+// Mini pool de ráfagas: salto (chorro cian hacia abajo) y aterrizaje (polvo
+// ámbar que se expande). Viven en la escena, no en levelGroup, para terminar
+// su vida de 0.4 s aunque cambie el nivel; limpiarNivel las purga igualmente.
+const particulasFX = []; // [{ points, material, vida, total, velocidades }]
+
+function crearRafaga(n, color, origen, modo) {
+  const positions = new Float32Array(n * 3);
+  const velocidades = [];
+  for (let i = 0; i < n; i++) {
+    positions[i * 3] = origen.x;
+    positions[i * 3 + 1] = origen.y;
+    positions[i * 3 + 2] = origen.z;
+    const ang = Math.random() * Math.PI * 2;
+    if (modo === "salto") {
+      const r = 0.3 + Math.random() * 0.9;
+      velocidades.push(new THREE.Vector3(Math.cos(ang) * r * 0.5, -1.5 - Math.random(), Math.sin(ang) * r * 0.5));
+    } else {
+      const r = 1.4 + Math.random() * 1.4;
+      velocidades.push(new THREE.Vector3(Math.cos(ang) * r, 0.25 + Math.random() * 0.6, Math.sin(ang) * r));
+    }
+  }
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.PointsMaterial({
+    color, size: 0.12, transparent: true, opacity: 0.9,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const points = new THREE.Points(geom, mat);
+  points.frustumCulled = false;
+  scene.add(points);
+  particulasFX.push({ points, material: mat, vida: 0, total: 0.4, velocidades });
+}
+
+function actualizarParticulasFX(dt) {
+  for (let i = particulasFX.length - 1; i >= 0; i--) {
+    const fx = particulasFX[i];
+    fx.vida += dt;
+    const attr = fx.points.geometry.attributes.position;
+    for (let j = 0; j < fx.velocidades.length; j++) {
+      const v = fx.velocidades[j];
+      attr.array[j * 3] += v.x * dt;
+      attr.array[j * 3 + 1] += v.y * dt;
+      attr.array[j * 3 + 2] += v.z * dt;
+    }
+    attr.needsUpdate = true;
+    fx.material.opacity = Math.max(0, 0.9 * (1 - fx.vida / fx.total));
+    if (fx.vida >= fx.total) {
+      scene.remove(fx.points);
+      fx.points.geometry.dispose();
+      fx.material.dispose();
+      particulasFX.splice(i, 1);
+    }
+  }
+}
+
+function limpiarParticulasFX() {
+  for (const fx of particulasFX.splice(0)) {
+    scene.remove(fx.points);
+    fx.points.geometry.dispose();
+    fx.material.dispose();
+  }
+}
+
+// Sombra suave bajo el robot: disco oscuro proyectado sobre la plataforma
+// que tenga debajo (hasta 4 unidades), para leer la altura cuando está en el
+// aire. Vive en la escena; limpiarNivel solo la oculta.
+const sombraSuave = new THREE.Mesh(
+  new THREE.CircleGeometry(0.55, 24),
+  new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false })
+);
+sombraSuave.rotation.x = -Math.PI / 2;
+sombraSuave.renderOrder = 1;
+sombraSuave.visible = false;
+scene.add(sombraSuave);
+
+function actualizarSombraSuave() {
+  let top = -Infinity;
+  for (const reg of currentRuntimePlatforms) {
+    if (reg.data.type === "falling" && (reg.state === "falling" || reg.state === "gone")) continue;
+    const size = reg.data.size;
+    const dentroX = Math.abs(player.root.position.x - reg.group.position.x) <= size[0] / 2 + 0.45;
+    const dentroZ = Math.abs(player.root.position.z - reg.group.position.z) <= size[2] / 2 + 0.45;
+    const t = reg.group.position.y + size[1] / 2;
+    if (dentroX && dentroZ && t <= player.root.position.y + 0.1 && t > top) top = t;
+  }
+  if (top === -Infinity) { sombraSuave.visible = false; return; }
+  const dist = player.root.position.y - top;
+  if (dist > 4) { sombraSuave.visible = false; return; }
+  sombraSuave.visible = true;
+  sombraSuave.position.set(player.root.position.x, top + 0.02, player.root.position.z);
+  sombraSuave.material.opacity = 0.35 * (1 - dist / 4);
+  const s = 1 + dist * 0.15;
+  sombraSuave.scale.set(s, s, 1);
+}
+
+// Estado del frame anterior para detectar aterrizajes (efectos de impacto).
+let groundedAnterior = true;
+
+/* ------------------------- Orbes de energía ---------------------------- */
+// Coleccionables por nivel: uno flotando ~1.1 sobre el centro de cada
+// plataforma salvo la de spawn. Posiciones y fases DETERMINISTAS (PRNG local
+// con semilla por nivel: el nivel 7 siempre tiene sus orbes en el mismo sitio).
+// Viven en orbesGroup dentro de levelGroup, así limpiarNivel las purga.
+let orbesGroup = null;
+let orbesRuntime = []; // [{mesh, base:{x,y,z}, fase, reg, recogido}]
+let orbesRecogidosNivel = 0;
+
+function mulberry32Local(semilla) {
+  // Copia local de la de levels.js (no se importa nada nuevo del generador).
+  let a = semilla >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function construirOrbes(indiceNivel) {
+  // Diseño: la TECLA R y el botón Reiniciar reconstruyen el nivel completo,
+  // orbes incluidos (reiniciar es reiniciar). En cambio, al MORIR no se
+  // restauran: lo recogido cuenta aunque caigas.
+  orbesGroup = new THREE.Group();
+  levelGroup.add(orbesGroup);
+  orbesRuntime = [];
+  orbesRecogidosNivel = 0;
+
+  const rng = mulberry32Local(1000 + indiceNivel);
+  const datos = LEVELS[indiceNivel];
+  for (let i = 1; i < datos.platforms.length; i++) { // EXCEPTO la primera (spawn)
+    const p = datos.platforms[i];
+    const top = p.pos[1] + p.size[1] / 2;
+    const base = {
+      x: p.pos[0] + (rng() - 0.5) * 0.3,
+      y: top + 1.1,
+      z: p.pos[2] + (rng() - 0.5) * 0.3,
+    };
+    const fase = rng() * Math.PI * 2;
+    const mesh = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.22, 1),
+      new THREE.MeshStandardMaterial({
+        color: 0x0a2a33, emissive: 0x4cf3ff, emissiveIntensity: 2.2,
+        metalness: 0.1, roughness: 0.35,
+      })
+    );
+    mesh.position.set(base.x, base.y, base.z);
+    orbesGroup.add(mesh);
+    // Referencia a la plataforma: si es móvil, el orbe viaja con su centro.
+    orbesRuntime.push({ mesh, base, fase, reg: currentRuntimePlatforms[i] || null, recogido: false });
+  }
+  actualizarHudOrbes();
+}
+
+function actualizarHudOrbes() {
+  dom.hudOrbes.textContent = `Orbes: ${orbesRecogidosNivel} / ${orbesRuntime.length}`;
+}
+
+function actualizarOrbes(dt) {
+  if (!orbesGroup) return;
+  const t = gameState.tiempoNivel;
+  const centroJugador = player.root.position.clone().add(new THREE.Vector3(0, 0.8, 0));
+  for (const o of orbesRuntime) {
+    if (o.recogido) continue;
+    if (o.reg && o.reg.data.type === "moving") {
+      o.base.x = o.reg.group.position.x;
+      o.base.z = o.reg.group.position.z;
+    }
+    o.mesh.position.x = o.base.x;
+    o.mesh.position.z = o.base.z;
+    o.mesh.position.y = o.base.y + Math.sin(t * 2 + o.fase) * 0.15;
+    o.mesh.rotation.y += dt * 1.5;
+    o.mesh.rotation.x += dt * 0.7;
+    if (centroJugador.distanceTo(o.mesh.position) < 0.9) {
+      o.recogido = true;
+      orbesGroup.remove(o.mesh);
+      o.mesh.geometry.dispose();
+      o.mesh.material.dispose();
+      orbesRecogidosNivel += 1;
+      actualizarHudOrbes();
+      crearRafaga(12, 0x4cf3ff, o.mesh.position.clone(), "aterrizaje");
+      sonidos.orbe();
+    }
+  }
+}
+
+/* ------------------------- Sonido sintetizado --------------------------- */
+// WebAudio perezoso: el AudioContext se crea con el primer gesto del usuario
+// (política de autoplay de los navegadores). Todo va envuelto en try/catch:
+// un navegador sin audio o con audio bloqueado nunca rompe el juego.
+let audioCtx = null;
+let audioMaster = null;
+
+function iniciarAudio() {
+  try {
+    if (audioCtx) {
+      if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+      return;
+    }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    audioCtx = new AC();
+    audioMaster = audioCtx.createGain();
+    audioMaster.gain.value = 0.25;
+    audioMaster.connect(audioCtx.destination);
+  } catch (e) {
+    audioCtx = null;
+    audioMaster = null;
+  }
+}
+
+function tono({ freq0, freq1, dur, tipo = "sine", vol = 1, delay = 0 }) {
+  try {
+    if (!audioCtx || !audioMaster || !progreso.sonido) return;
+    // Defensivo: si el navegador suspendió el contexto (p.ej. al volver del
+    // bloqueo del móvil), se reanuda aquí y el sonido no queda mudo.
+    if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+    const t0 = audioCtx.currentTime + delay;
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = tipo;
+    osc.frequency.setValueAtTime(Math.max(1, freq0), t0);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, freq1), t0 + dur);
+    // Envolvente ataque/caída (exponentialRamp no admite 0: se usa 0.0001).
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0001, vol), t0 + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g);
+    g.connect(audioMaster);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.02);
+  } catch (e) {}
+}
+
+const sonidos = {
+  salto: () => tono({ freq0: 220, freq1: 440, dur: 0.12, tipo: "square", vol: 0.5 }),
+  aterrizaje: () => tono({ freq0: 140, freq1: 60, dur: 0.15, tipo: "sine", vol: 0.6 }),
+  orbe: () => {
+    tono({ freq0: 880, freq1: 1320, dur: 0.09, vol: 0.5 });
+    tono({ freq0: 1320, freq1: 1760, dur: 0.09, vol: 0.5, delay: 0.06 });
+  },
+  portal: () => {
+    [523, 659, 784].forEach((f, i) => tono({ freq0: f, freq1: f, dur: 0.12, vol: 0.6, delay: i * 0.12 }));
+  },
+  caida: () => tono({ freq0: 300, freq1: 80, dur: 0.35, tipo: "sawtooth", vol: 0.5 }),
+};
+
 function centrarYEscalarModelo(modelo) {
   const box = new THREE.Box3().setFromObject(modelo);
   const size = new THREE.Vector3();
@@ -818,6 +1305,7 @@ function construirNivel(indice) {
   const datosNivel = LEVELS[indice];
   const bbox = construirPlataformas(datosNivel);
   crearPortal(datosNivel);
+  construirOrbes(indice);
 
   // Ajustar el frustum de sombra de la luz direccional al tamaño real del nivel.
   // La luz es diagonal (+12,+22,+14), así que la Z del mundo también proyecta sobre
@@ -850,6 +1338,8 @@ function construirNivel(indice) {
   player.bob.position.set(0, 0, 0);
 
   cameraYaw = Math.PI;
+  orbit.yaw = 0;          // la órbita manual se resetea al empezar nivel (pitch y zoom se conservan)
+  groundedAnterior = false;
   posicionarCamaraInstantanea();
 
   dom.hudNivel.textContent = `${datosNivel.nombre} / ${LEVELS.length}`;
@@ -861,6 +1351,7 @@ function resetearPlataformasQueCaen() {
     reg.state = "idle";
     reg.timer = 0;
     reg.velY = 0;
+    if (reg.material) reg.material.emissiveIntensity = 1;
     reg.group.visible = true;
     reg.group.position.set(reg.base.x, reg.base.y, reg.base.z);
   }
@@ -894,10 +1385,13 @@ function actualizarPlataformas(dt) {
         const intensidad = 0.04;
         reg.group.position.x = reg.base.x + (Math.random() - 0.5) * intensidad;
         reg.group.position.z = reg.base.z + (Math.random() - 0.5) * intensidad;
+        // Pulso emisivo de alarma mientras tiembla.
+        if (reg.material) reg.material.emissiveIntensity = 1 + Math.abs(Math.sin(performance.now() * 0.02)) * 2.5;
         if (reg.timer >= FALLING_PLATFORM_SHAKE_TIME) {
           reg.state = "falling";
           reg.group.position.x = reg.base.x;
           reg.group.position.z = reg.base.z;
+          if (reg.material) reg.material.emissiveIntensity = 1;
         }
       } else if (reg.state === "falling") {
         reg.velY += GRAVITY * dt;
@@ -944,11 +1438,12 @@ function resolverSuelo() {
 }
 
 function actualizarJugador(dt) {
-  // --- Entrada relativa a la cámara ---
-  const forwardVec = new THREE.Vector3(Math.sin(cameraYaw), 0, Math.cos(cameraYaw));
+  // --- Entrada relativa a la VISTA (chase cam + órbita manual del jugador) ---
+  const yawVista = cameraYaw + orbit.yaw;
+  const forwardVec = new THREE.Vector3(Math.sin(yawVista), 0, Math.cos(yawVista));
   // Derecha REAL de la cámara: forward rotado -90° sobre Y. (Con +90° el vector
   // apuntaba a la izquierda de pantalla y A/D salían invertidos.)
-  const rightVec = new THREE.Vector3(Math.sin(cameraYaw - Math.PI / 2), 0, Math.cos(cameraYaw - Math.PI / 2));
+  const rightVec = new THREE.Vector3(Math.sin(yawVista - Math.PI / 2), 0, Math.cos(yawVista - Math.PI / 2));
   const moveDir = new THREE.Vector3();
   if (input.forward) moveDir.add(forwardVec);
   if (input.backward) moveDir.sub(forwardVec);
@@ -980,6 +1475,12 @@ function actualizarJugador(dt) {
   // de realimentación y el robot orbita en círculos en vez de caminar recto.
   if (moveDir.lengthSq() > 0.0001 && moveDir.dot(forwardVec) > 0.05) {
     cameraYaw = lerpAngulo(cameraYaw, player.root.rotation.y, 1 - Math.exp(-CAMERA_YAW_LAG * dt));
+    // Retorno automático de la órbita al avanzar y sin arrastre activo: la
+    // cámara se recoloca sola detrás del robot (lerpAngulo = amortiguar con
+    // envolvente angular, para que nunca dé la vuelta larga).
+    if (!orbit.arrastrando) {
+      orbit.yaw = lerpAngulo(orbit.yaw, 0, 1 - Math.exp(-2.2 * dt));
+    }
   }
 
   // --- Salto (con buffer de 120 ms: pulsar justo antes de aterrizar sí salta) ---
@@ -989,6 +1490,8 @@ function actualizarJugador(dt) {
       player.grounded = false;
       player.currentPlatform = null;
       input.jumpQueuedAt = 0;
+      crearRafaga(14, 0x4cf3ff, player.root.position.clone(), "salto");
+      sonidos.salto();
     } else if (performance.now() - input.jumpQueuedAt > 120) {
       input.jumpQueuedAt = 0; // el buffer caduca
     }
@@ -999,6 +1502,7 @@ function actualizarJugador(dt) {
   player.root.position.x += player.velocity.x * dt;
   player.root.position.z += player.velocity.z * dt;
   player.root.position.y += player.velocity.y * dt;
+  const velYAlImpacto = player.velocity.y; // antes de que resolverSuelo la ponga a 0
 
   // --- Colisión con el suelo (plataformas) ---
   const suelo = resolverSuelo();
@@ -1019,10 +1523,21 @@ function actualizarJugador(dt) {
     player.currentPlatform = null;
   }
 
+  // Efectos de aterrizaje: polvo ámbar + squash solo si la caída era fuerte.
+  if (suelo.grounded && !groundedAnterior && Math.abs(velYAlImpacto) > 4) {
+    crearRafaga(16, 0xffb347, player.root.position.clone(), "aterrizaje");
+    player.bob.scale.y = 0.82;
+    sonidos.aterrizaje();
+  }
+  groundedAnterior = suelo.grounded;
+
   // --- Animación procedural (bamboleo, inclinación) ---
   player.bobPhase += dt * (player.moving ? 6.5 : 2.2);
   const amplitudBob = player.moving ? 0.05 : 0.09;
   player.bob.position.y = Math.sin(player.bobPhase) * amplitudBob;
+
+  // Recuperación del squash de aterrizaje.
+  player.bob.scale.y = amortiguar(player.bob.scale.y, 1, 10, dt);
 
   const inclinacionObjetivo = player.moving ? -0.18 : 0;
   player.bob.rotation.x = amortiguar(player.bob.rotation.x, inclinacionObjetivo, 8, dt);
@@ -1033,30 +1548,29 @@ function actualizarJugador(dt) {
 }
 
 function posicionarCamaraInstantanea() {
-  const forwardVec = new THREE.Vector3(Math.sin(cameraYaw), 0, Math.cos(cameraYaw));
-  const posDeseada = player.root.position.clone()
-    .addScaledVector(forwardVec, -CAMERA_DISTANCE)
-    .add(new THREE.Vector3(0, CAMERA_HEIGHT, 0));
-  camera.position.copy(posDeseada);
-  const mirarA = player.root.position.clone()
-    .addScaledVector(forwardVec, CAMERA_LOOK_AHEAD)
-    .add(new THREE.Vector3(0, CAMERA_LOOK_HEIGHT, 0));
-  camera.lookAt(mirarA);
+  // Esférica alrededor del robot: yaw de chase + órbita manual, pitch y zoom.
+  const yawTotal = cameraYaw + orbit.yaw;
+  const cosP = Math.cos(orbit.pitch);
+  camera.position.set(
+    player.root.position.x - Math.sin(yawTotal) * cosP * orbit.dist,
+    player.root.position.y + 1.0 + Math.sin(orbit.pitch) * orbit.dist,
+    player.root.position.z - Math.cos(yawTotal) * cosP * orbit.dist
+  );
+  camera.lookAt(player.root.position.x, player.root.position.y + 1.1, player.root.position.z);
 }
 
 function actualizarCamara(dt) {
-  const forwardVec = new THREE.Vector3(Math.sin(cameraYaw), 0, Math.cos(cameraYaw));
-  const posDeseada = player.root.position.clone()
-    .addScaledVector(forwardVec, -CAMERA_DISTANCE)
-    .add(new THREE.Vector3(0, CAMERA_HEIGHT, 0));
+  const yawTotal = cameraYaw + orbit.yaw;
+  const cosP = Math.cos(orbit.pitch);
+  const posDeseada = new THREE.Vector3(
+    player.root.position.x - Math.sin(yawTotal) * cosP * orbit.dist,
+    player.root.position.y + 1.0 + Math.sin(orbit.pitch) * orbit.dist,
+    player.root.position.z - Math.cos(yawTotal) * cosP * orbit.dist
+  );
 
   const t = 1 - Math.exp(-6 * dt);
   camera.position.lerp(posDeseada, t);
-
-  const mirarA = player.root.position.clone()
-    .addScaledVector(forwardVec, CAMERA_LOOK_AHEAD)
-    .add(new THREE.Vector3(0, CAMERA_LOOK_HEIGHT, 0));
-  camera.lookAt(mirarA);
+  camera.lookAt(player.root.position.x, player.root.position.y + 1.1, player.root.position.z);
 }
 
 function actualizarPortal(dt) {
@@ -1075,6 +1589,7 @@ function comprobarMuerte() {
     progreso.caidasTotales += 1;
     guardarProgreso(progreso);
     actualizarHudCaidas();
+    sonidos.caida();
 
     resetearPlataformasQueCaen();
 
@@ -1087,6 +1602,8 @@ function comprobarMuerte() {
     // recolocada al instante (antes la cámara planeaba a través del mapa).
     player.root.rotation.y = Math.PI;
     cameraYaw = Math.PI;
+    orbit.yaw = 0;
+    groundedAnterior = false;
     posicionarCamaraInstantanea();
   }
 }
@@ -1128,10 +1645,13 @@ function completarNivel() {
   const esUltimo = gameState.nivelIndex >= LEVELS.length - 1;
 
   progreso.maxNivel = Math.max(progreso.maxNivel, gameState.nivelIndex + 1);
+  progreso.orbesTotales += orbesRecogidosNivel;
   guardarProgreso(progreso);
+  sonidos.portal();
 
   if (esUltimo) {
     dom.textoCaidasFinal.textContent = `Caídas totales: ${progreso.caidasTotales}`;
+    dom.textoOrbesFinal.textContent = `Orbes totales: ${progreso.orbesTotales}`;
     mostrar(dom.pantallaFinal);
     dom.hud.classList.remove("visible");
     dom.ayuda.classList.remove("visible");
@@ -1142,6 +1662,7 @@ function completarNivel() {
 }
 
 dom.btnSiguienteNivel.addEventListener("click", () => {
+  iniciarAudio();
   ocultar(dom.pantallaCompletado);
   const siguiente = gameState.nivelIndex + 1;
   construirNivel(siguiente);
@@ -1149,16 +1670,19 @@ dom.btnSiguienteNivel.addEventListener("click", () => {
 });
 
 dom.btnJugarDeNuevo.addEventListener("click", () => {
+  iniciarAudio();
   iniciarJuegoDesdeNivel(0);
 });
 
 dom.btnJugar.addEventListener("click", () => {
   if (!robotTemplate) return;
+  iniciarAudio();
   iniciarJuegoDesdeNivel(0);
 });
 
 dom.btnContinuar.addEventListener("click", () => {
   if (!robotTemplate) return;
+  iniciarAudio();
   iniciarJuegoDesdeNivel(Math.min(progreso.maxNivel, LEVELS.length - 1));
 });
 
@@ -1169,12 +1693,26 @@ dom.hudReiniciar.addEventListener("click", () => {
   gameState.fase = "jugando";
 });
 
+// Botón de sonido del HUD: alterna y persiste la preferencia.
+function actualizarHudSonido() {
+  dom.hudSound.textContent = progreso.sonido ? "Sonido: Sí" : "Sonido: No";
+}
+actualizarHudSonido();
+dom.hudSound.addEventListener("click", () => {
+  progreso.sonido = !progreso.sonido;
+  guardarProgreso(progreso);
+  if (progreso.sonido) iniciarAudio();
+  actualizarHudSonido();
+});
+
 /* --------------------------------- Resize ---------------------------------- */
 
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  composer.setSize(window.innerWidth, window.innerHeight);
+  ajustarResolucionFXAA();
 });
 
 /* ---------------------------------- Bucle ----------------------------------- */
@@ -1182,9 +1720,27 @@ window.addEventListener("resize", () => {
 const reloj = new THREE.Clock();
 let reinicioArmado = true; // evita reiniciar en bucle mientras se mantiene pulsada R
 
+// Vigilante de FPS: si con bloom activo la media de los últimos 120 frames
+// pasa de 24 ms tres comprobaciones seguidas, el bloom se apaga solo.
+const historialDt = [];
+let mediaDtMs = 16.7;
+let comprobacionesLentas = 0;
+
 function animar() {
   requestAnimationFrame(animar);
   const dt = Math.min(reloj.getDelta(), 0.05);
+
+  historialDt.push(dt);
+  if (historialDt.length > 120) historialDt.shift();
+  if (historialDt.length === 120) {
+    mediaDtMs = (historialDt.reduce((a, b) => a + b, 0) / 120) * 1000;
+    if (bloomActivo && bloomPass.enabled && mediaDtMs > 24) {
+      comprobacionesLentas += 1;
+      if (comprobacionesLentas >= 3) bloomPass.enabled = false;
+    } else {
+      comprobacionesLentas = 0;
+    }
+  }
 
   if (gameState.fase === "jugando") {
     if (input.restart) {
@@ -1201,11 +1757,23 @@ function animar() {
     actualizarJugador(dt);
     actualizarCamara(dt);
     actualizarPortal(dt);
+    actualizarOrbes(dt);
+    actualizarSombraSuave();
     comprobarMuerte();
     comprobarPortal();
   }
 
-  renderer.render(scene, camera);
+  actualizarParticulasFX(dt); // las ráfagas terminan su vida aunque haya overlay
+
+  // Decoración: rocas girando lentamente y polvo a la deriva.
+  for (const roca of decoracionRocas) {
+    roca.mesh.rotation.x += roca.vel.x * dt;
+    roca.mesh.rotation.y += roca.vel.y * dt;
+    roca.mesh.rotation.z += roca.vel.z * dt;
+  }
+  actualizarPolvo(dt);
+
+  composer.render();
 }
 
 /* ------------------------------- Arranque ------------------------------- */
@@ -1236,7 +1804,13 @@ if (new URLSearchParams(location.search).has("debug")) {
     player,
     gameState,
     input,
+    camara: camera,
     getCameraYaw: () => cameraYaw,
+    getOrbitYaw: () => orbit.yaw,
+    bloom: () => bloomPass?.enabled,
+    bloomFuerza: (v) => { if (bloomPass) bloomPass.strength = v; },
+    fps: () => mediaDtMs,
+    orbes: () => ({ recogidos: orbesRecogidosNivel, total: orbesRuntime.length }),
     portal: () => portalRuntime ? { x: portalRuntime.group.position.x, y: portalRuntime.group.position.y, z: portalRuntime.group.position.z } : null,
     plataformas: () => currentRuntimePlatforms.map((r) => ({
       type: r.data.type, state: r.state,
@@ -1329,6 +1903,43 @@ function montarControlesTactiles() {
   btnSalto.addEventListener("touchstart", (e) => { e.preventDefault(); teclaEspacio("keydown"); }, { passive: false });
   btnSalto.addEventListener("touchend", (e) => { e.preventDefault(); teclaEspacio("keyup"); }, { passive: false });
   btnSalto.addEventListener("touchcancel", (e) => { e.preventDefault(); teclaEspacio("keyup"); }, { passive: false });
+
+  // Dedo de cámara: cualquier toque que NO caiga en la zona del joystick ni en
+  // el botón SALTAR orbita la cámara (típicamente la mitad derecha o superior).
+  // Convive con el joystick: cada control guarda su propio identificador de dedo.
+  const esDeControles = (el) => !!(el && (el === zona || zona.contains(el) || el === btnSalto || btnSalto.contains(el)));
+  window.addEventListener("touchstart", (e) => {
+    if (orbit.idDedo !== null) return; // un solo dedo de cámara
+    const t = Array.from(e.changedTouches)[0];
+    if (!t || esDeControles(t.target)) return;
+    orbit.idDedo = t.identifier;
+    orbit.arrastrando = true;
+    orbit.xAnt = t.clientX;
+    orbit.yAnt = t.clientY;
+  }, { passive: true });
+  window.addEventListener("touchmove", (e) => {
+    if (orbit.idDedo === null) return;
+    for (const t of Array.from(e.changedTouches)) {
+      if (t.identifier !== orbit.idDedo) continue;
+      const dx = t.clientX - orbit.xAnt;
+      const dy = t.clientY - orbit.yAnt;
+      orbit.xAnt = t.clientX;
+      orbit.yAnt = t.clientY;
+      orbit.yaw -= dx * 0.006;
+      orbit.pitch = THREE.MathUtils.clamp(orbit.pitch + dy * 0.004, -0.10, 1.15);
+    }
+  }, { passive: true });
+  const soltarDedoCamara = (e) => {
+    if (orbit.idDedo === null) return;
+    for (const t of Array.from(e.changedTouches)) {
+      if (t.identifier === orbit.idDedo) {
+        orbit.idDedo = null;
+        orbit.arrastrando = false;
+      }
+    }
+  };
+  window.addEventListener("touchend", soltarDedoCamara);
+  window.addEventListener("touchcancel", soltarDedoCamara);
 }
 
 montarControlesTactiles();
