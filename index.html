@@ -308,9 +308,11 @@
     <div>
       <button class="boton-sci" id="btn-jugar" disabled>Cargando…</button>
       <button class="boton-sci boton-secundario" id="btn-continuar" style="display:none;">Continuar</button>
+      <button class="boton-sci boton-secundario" id="btn-instalar" style="display:none;">Instalar app</button>
     </div>
-    <div class="info-carga" id="info-carga">Cargando robot (0%)…</div>
-    <div class="info-progreso" id="info-progreso"></div>
+    <p class="info-carga" id="info-carga">Cargando robot (0%)…</p>
+    <p class="info-progreso" id="info-progreso"></p>
+    <p class="info-carga" id="pista-ios" style="display:none;">En iPhone: botón Compartir de Safari y luego Añadir a pantalla de inicio</p>
   </div>
 </div>
 
@@ -479,6 +481,8 @@ const dom = {
   btnContinuar: document.getElementById("btn-continuar"),
   infoCarga: document.getElementById("info-carga"),
   infoProgreso: document.getElementById("info-progreso"),
+  btnInstalar: document.getElementById("btn-instalar"),
+  pistaIos: document.getElementById("pista-ios"),
   pantallaCompletado: document.getElementById("pantalla-completado"),
   textoNivelSuperado: document.getElementById("texto-nivel-superado"),
   btnSiguienteNivel: document.getElementById("btn-siguiente-nivel"),
@@ -1328,6 +1332,31 @@ function montarControlesTactiles() {
 }
 
 montarControlesTactiles();
+
+// Instalación PWA: en Android/Chrome el propio juego ofrece el botón Instalar.
+// En iPhone no existe ese mecanismo: se muestra la pista del menú Compartir.
+const esIos = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+if (esIos && !window.matchMedia("(display-mode: standalone)").matches) {
+  dom.pistaIos.style.display = "block";
+}
+let eventoInstalacion = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  eventoInstalacion = e;
+  if (!window.matchMedia("(display-mode: standalone)").matches) {
+    dom.btnInstalar.style.display = "inline-block";
+  }
+});
+dom.btnInstalar.addEventListener("click", async () => {
+  if (!eventoInstalacion) return;
+  eventoInstalacion.prompt();
+  await eventoInstalacion.userChoice.catch(() => {});
+  eventoInstalacion = null;
+  dom.btnInstalar.style.display = "none";
+});
+window.addEventListener("appinstalled", () => {
+  dom.btnInstalar.style.display = "none";
+});
 
 // Service Worker (PWA): cachea el juego para jugar sin conexión. Solo en https
 // o localhost, nunca con file://.
