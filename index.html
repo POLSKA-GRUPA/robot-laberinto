@@ -297,21 +297,10 @@
     color: var(--neon-orange);
     margin: 10px 0 20px 0;
   }
-
-  /* Flash rojo al recibir un golpe de drone */
-  #flash-golpe {
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: 15; /* sobre el juego, por debajo de los overlays (20) */
-    background: radial-gradient(ellipse at center, rgba(255, 34, 68, 0) 40%, rgba(255, 34, 68, 0.55) 100%);
-    opacity: 0;
-  }
 </style>
 </head>
 <body>
 <div id="app"></div>
-<div id="flash-golpe"></div>
 
 <!-- HUD en juego -->
 <div id="hud">
@@ -539,7 +528,6 @@ const dom = {
   hudTiempo: document.getElementById("hud-tiempo"),
   hudCaidas: document.getElementById("hud-caidas"),
   hudOrbes: document.getElementById("hud-orbes"),
-  flashGolpe: document.getElementById("flash-golpe"),
   hudReiniciar: document.getElementById("hud-reiniciar"),
   hudSound: document.getElementById("hud-sound"),
   ayuda: document.getElementById("crosshair-ayuda"),
@@ -758,13 +746,8 @@ function limpiarNivel() {
     });
   }
   currentRuntimePlatforms = [];
-  currentRuntimeDrones = [];
   portalRuntime = null;
-  invulnerableRestante = 0;
-  empujeRestante = 0;
-  parpadeoAcumulado = 0;
-  shakeCamara = 0;
-  player.bob.visible = true; // por si parpadeaba al cambiar de nivel
+  player.bob.visible = true;
   limpiarParticulasFX();
   sombraSuave.visible = false;
 }
@@ -1245,160 +1228,6 @@ function actualizarOrbes(dt) {
   }
 }
 
-/* ---------------------------- Drones enemigos ---------------------------- */
-// Drones de patrulla que vigilan plataformas estáticas y EMPUJAN al robot si
-// se acerca (no matan: el peligro es caerse del empujón). Deterministas por
-// nivel (semilla 5000 + índice): el nivel 10 siempre tiene sus 2 drones en
-// las mismas plataformas. Viven en enemigosGroup dentro de levelGroup, así
-// limpiarNivel purga sus geometrías y materiales.
-
-let enemigosGroup = null;
-let currentRuntimeDrones = []; // [{group, ojo, base, eje, amplitud, velocidad, fase}]
-let invulnerableRestante = 0;  // > 0: parpadeo del robot y sin colisiones
-let empujeRestante = 0;        // > 0: el input no pisa la velocidad del empujón
-let parpadeoAcumulado = 0;
-let shakeCamara = 0;           // sacudida de cámara al recibir un golpe
-
-function construirDrones(indiceNivel) {
-  enemigosGroup = new THREE.Group();
-  levelGroup.add(enemigosGroup);
-  currentRuntimeDrones = [];
-  invulnerableRestante = 0;
-  empujeRestante = 0;
-  parpadeoAcumulado = 0;
-  shakeCamara = 0;
-
-  // Cantidad: niveles 1-4 ninguno; 1 drone del nivel 5, 2 del 10, 3 del 15.
-  const nDrones = Math.min(3, Math.floor((indiceNivel + 1) / 5));
-  if (nDrones <= 0) return;
-
-  const rng = mulberry32Local(5000 + indiceNivel);
-  const datos = LEVELS[indiceNivel];
-
-  // Candidatas: plataformas estáticas, ni la primera (spawn) ni la última
-  // (la más cercana al portal), con lado utilizable para patrullar. Umbral
-  // 2.4 = mínimo del generador: en niveles de dificultad alta TODAS las
-  // plataformas son menores que 3.5 y un umbral alto dejaría el nivel sin
-  // drones (bug cazado en el test de frontera del nivel 15).
-  const candidatas = [];
-  for (let i = 1; i < datos.platforms.length - 1; i++) {
-    const p = datos.platforms[i];
-    if (p.type !== "static") continue;
-    if (Math.max(p.size[0], p.size[2]) >= 2.4) candidatas.push(i);
-  }
-  // Barajado determinista de las candidatas.
-  for (let i = candidatas.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [candidatas[i], candidatas[j]] = [candidatas[j], candidatas[i]];
-  }
-
-  for (let d = 0; d < nDrones && d < candidatas.length; d++) {
-    const reg = currentRuntimePlatforms[candidatas[d]];
-    if (!reg) continue;
-
-    // Eje de patrulla aleatorio; si el lado elegido es demasiado corto, se
-    // usa el largo (umbral de candidatas: lado >= 2.4).
-    let eje = rng() < 0.5 ? "x" : "z";
-    let dim = eje === "x" ? reg.data.size[0] : reg.data.size[2];
-    if (dim / 2 - 0.7 < 0.5) {
-      eje = eje === "x" ? "z" : "x";
-      dim = eje === "x" ? reg.data.size[0] : reg.data.size[2];
-    }
-    const amplitud = Math.max(0.5, dim / 2 - 0.7);
-    const velocidad = 0.8 + rng() * 0.5;
-    const fase = rng() * Math.PI * 2;
-    const top = reg.group.position.y + reg.data.size[1] / 2;
-
-    const grupo = new THREE.Group();
-    const cuerpo = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(0.28, 0),
-      new THREE.MeshStandardMaterial({ color: 0x33131f, metalness: 0.75, roughness: 0.35 })
-    );
-    const ojo = new THREE.Mesh(
-      new THREE.SphereGeometry(0.09, 10, 10),
-      new THREE.MeshStandardMaterial({ color: 0x220000, emissive: 0xff2244, emissiveIntensity: 2.5, roughness: 0.4 })
-    );
-    ojo.position.set(0, -0.08, 0.22);
-    const anillo = new THREE.Mesh(
-      new THREE.TorusGeometry(0.4, 0.03, 8, 24),
-      new THREE.MeshStandardMaterial({ color: 0x220000, emissive: 0xff2244, emissiveIntensity: 0.8, metalness: 0.3, roughness: 0.5 })
-    );
-    anillo.rotation.x = Math.PI / 2; // plano horizontal
-    grupo.add(cuerpo, ojo, anillo);
-    grupo.position.set(reg.group.position.x, top + 0.65, reg.group.position.z);
-    enemigosGroup.add(grupo);
-
-    currentRuntimeDrones.push({
-      group: grupo, ojo,
-      base: { x: reg.group.position.x, y: top + 0.65, z: reg.group.position.z },
-      eje, amplitud, velocidad, fase,
-    });
-  }
-}
-
-function actualizarDrones(dt) {
-  const t = gameState.tiempoNivel;
-  for (const d of currentRuntimeDrones) {
-    const offset = Math.sin(t * d.velocidad + d.fase) * d.amplitud;
-    if (d.eje === "x") d.group.position.x = d.base.x + offset;
-    else d.group.position.z = d.base.z + offset;
-    // Vaivén vertical suave y pulso del ojo.
-    d.group.position.y = d.base.y + Math.sin(t * 2.2 + d.fase) * 0.08;
-    d.ojo.material.emissiveIntensity = 2.5 + Math.sin(t * 6 + d.fase) * 0.8;
-    // Inclinación hacia el lado al que se mueve.
-    const velInst = Math.cos(t * d.velocidad + d.fase) * d.amplitud * d.velocidad;
-    if (d.eje === "x") d.group.rotation.z = THREE.MathUtils.clamp(-velInst * 0.06, -0.35, 0.35);
-    else d.group.rotation.x = THREE.MathUtils.clamp(velInst * 0.06, -0.35, 0.35);
-  }
-}
-
-function comprobarGolpeDrones(dt) {
-  // Parpadeo de invulnerabilidad (y sin colisiones mientras dura).
-  if (invulnerableRestante > 0) {
-    invulnerableRestante = Math.max(0, invulnerableRestante - dt);
-    parpadeoAcumulado += dt;
-    if (parpadeoAcumulado >= 0.1) {
-      parpadeoAcumulado = 0;
-      player.bob.visible = !player.bob.visible;
-    }
-    if (invulnerableRestante === 0) player.bob.visible = true;
-    return;
-  }
-  for (const d of currentRuntimeDrones) {
-    const dx = player.root.position.x - d.group.position.x;
-    const dz = player.root.position.z - d.group.position.z;
-    const distH = Math.hypot(dx, dz);
-    if (distH >= 0.8) continue;
-    if (Math.abs(d.group.position.y - (player.root.position.y + 0.8)) >= 1.1) continue;
-
-    // GOLPE: empuje horizontal + pequeño salto, invulnerabilidad, flash y sacudida.
-    let nx = 1, nz = 0;
-    if (distH > 0.0001) { nx = dx / distH; nz = dz / distH; }
-    player.velocity.x = nx * 7;
-    player.velocity.z = nz * 7;
-    player.velocity.y = 4.5;
-    player.grounded = false;
-    player.currentPlatform = null;
-    empujeRestante = 0.45;
-    invulnerableRestante = 1.2;
-    parpadeoAcumulado = 0;
-    shakeCamara = 0.15;
-    sonidos.golpe();
-    crearRafaga(8, 0xff2244, player.root.position.clone().add(new THREE.Vector3(0, 0.8, 0)), "aterrizaje");
-    // Flash rojo: aparece al instante y se apaga con transición CSS.
-    const flash = dom.flashGolpe;
-    if (flash) {
-      flash.style.transition = "none";
-      flash.style.opacity = "0.45";
-      requestAnimationFrame(() => {
-        flash.style.transition = "opacity 0.3s ease-out";
-        flash.style.opacity = "0";
-      });
-    }
-    break; // un solo golpe por frame
-  }
-}
-
 /* ------------------------- Sonido sintetizado --------------------------- */
 // WebAudio perezoso: el AudioContext se crea con el primer gesto del usuario
 // (política de autoplay de los navegadores). Todo va envuelto en try/catch:
@@ -1464,7 +1293,6 @@ const sonidos = {
     [523, 659, 784].forEach((f, i) => tono({ freq0: f, freq1: f, dur: 0.12, vol: 0.6, delay: i * 0.12 }));
   },
   caida: () => tono({ freq0: 300, freq1: 80, dur: 0.35, tipo: "sawtooth", vol: 0.5 }),
-  golpe: () => tono({ freq0: 160, freq1: 70, dur: 0.2, tipo: "sawtooth", vol: 0.6 }),
 };
 
 /* --------------------- Música ambiental sintetizada --------------------- */
@@ -1656,7 +1484,6 @@ function construirNivel(indice) {
   const bbox = construirPlataformas(datosNivel);
   crearPortal(datosNivel);
   construirOrbes(indice);
-  construirDrones(indice);
 
   // Ajustar el frustum de sombra de la luz direccional al tamaño real del nivel.
   // La luz es diagonal (+12,+22,+14), así que la Z del mundo también proyecta sobre
@@ -1804,10 +1631,6 @@ function actualizarJugador(dt) {
   // así respeta el gate del chase-cam y el resto de la física sin tocar nada más.
   const tv = window.__touchVec; if (tv) { moveDir.addScaledVector(forwardVec, tv.y); moveDir.addScaledVector(rightVec, tv.x); }
 
-  // Timer de empuje de drone (ver comprobarGolpeDrones): mientras dura, el
-  // input no sobreescribe la velocidad horizontal del empujón.
-  if (empujeRestante > 0) empujeRestante = Math.max(0, empujeRestante - dt);
-  const controlHabilitado = empujeRestante <= 0;
   let girando = 0;
   if (moveDir.lengthSq() > 0.0001) {
     moveDir.normalize();
@@ -1815,16 +1638,12 @@ function actualizarJugador(dt) {
     const yawAnterior = player.root.rotation.y;
     player.root.rotation.y = lerpAngulo(yawAnterior, targetYaw, 1 - Math.exp(-ROTATE_SPEED * dt));
     girando = lerpAngulo(0, ((player.root.rotation.y - yawAnterior + Math.PI) % (Math.PI * 2)) - Math.PI, 1) / dt;
-    if (controlHabilitado) {
-      player.velocity.x = moveDir.x * MOVE_SPEED;
-      player.velocity.z = moveDir.z * MOVE_SPEED;
-    }
+    player.velocity.x = moveDir.x * MOVE_SPEED;
+    player.velocity.z = moveDir.z * MOVE_SPEED;
     player.moving = true;
   } else {
-    if (controlHabilitado) {
-      player.velocity.x = 0;
-      player.velocity.z = 0;
-    }
+    player.velocity.x = 0;
+    player.velocity.z = 0;
     player.moving = false;
   }
 
@@ -1930,14 +1749,6 @@ function actualizarCamara(dt) {
 
   const t = 1 - Math.exp(-6 * dt);
   camera.position.lerp(posDeseada, t);
-  // Sacudida de cámara al recibir un golpe de drone: offset aleatorio pequeño
-  // que decae solo (lo dispara comprobarGolpeDrones con shakeCamara = 0.15).
-  if (shakeCamara > 0.002) {
-    camera.position.x += (Math.random() - 0.5) * 2 * shakeCamara;
-    camera.position.y += (Math.random() - 0.5) * 2 * shakeCamara;
-    camera.position.z += (Math.random() - 0.5) * 2 * shakeCamara;
-    shakeCamara = amortiguar(shakeCamara, 0, 8, dt);
-  }
   camera.lookAt(player.root.position.x, player.root.position.y + 1.1, player.root.position.z);
 }
 
@@ -1972,11 +1783,6 @@ function comprobarMuerte() {
     cameraYaw = Math.PI;
     orbit.yaw = 0;
     groundedAnterior = false;
-    // Fin del estado de golpe si estaba activo: el robot reaparece limpio.
-    invulnerableRestante = 0;
-    empujeRestante = 0;
-    parpadeoAcumulado = 0;
-    player.bob.visible = true;
     posicionarCamaraInstantanea();
   }
 }
@@ -1997,9 +1803,7 @@ function comprobarPortal() {
 // 'celebrando') y los inputs de movimiento no tienen efecto.
 function iniciarCelebracion() {
   gameState.fase = "celebrando";
-  // Si llegamos parpadeando por un golpe de drone, volver a ser visibles ya:
-  // el parpadeo no se procesa en esta fase y el robot celebraría invisible.
-  player.bob.visible = true;
+  player.bob.visible = true; // seguridad: celebrar siempre visible
   gameState.celebracionT = 0;
   acumuladorCelebracion = 0;
   // El sonido de portal suena al EMPEZAR la celebración (antes estaba en
@@ -2021,9 +1825,8 @@ function actualizarCelebracion(dt) {
       crearRafaga(6, 0xff4cf0, portalRuntime.group.position.clone(), "aterrizaje");
     }
   }
-  // La escena sigue viva: plataformas, drones, cámara y portal se animan.
+  // La escena sigue viva: plataformas, partículas, cámara y portal se animan.
   actualizarPlataformas(dt);
-  actualizarDrones(dt);
   actualizarCamara(dt);
   actualizarPortal(dt);
   if (progresoCeleb >= 1) {
@@ -2199,8 +2002,6 @@ function animar() {
     actualizarCamara(dt);
     actualizarPortal(dt);
     actualizarOrbes(dt);
-    actualizarDrones(dt);
-    comprobarGolpeDrones(dt);
     actualizarSombraSuave();
     comprobarMuerte();
     comprobarPortal();
@@ -2275,9 +2076,6 @@ if (new URLSearchParams(location.search).has("debug")) {
     bloomFuerza: (v) => { if (bloomPass) bloomPass.strength = v; },
     fps: () => mediaDtMs,
     orbes: () => ({ recogidos: orbesRecogidosNivel, total: orbesRuntime.length }),
-    drones: () => currentRuntimeDrones.map((d) => ({
-      x: +d.group.position.x.toFixed(2), y: +d.group.position.y.toFixed(2), z: +d.group.position.z.toFixed(2),
-    })),
     musica: () => ({ activa: !!musicaTimer, ctx: audioCtx ? audioCtx.state : "sin-contexto" }),
     portal: () => portalRuntime ? { x: portalRuntime.group.position.x, y: portalRuntime.group.position.y, z: portalRuntime.group.position.z } : null,
     plataformas: () => currentRuntimePlatforms.map((r) => ({
