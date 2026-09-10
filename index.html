@@ -313,6 +313,7 @@
     <div class="hud-caja" id="hud-orbes">Orbes: 0 / 0</div>
     <button class="boton-sci hud-caja" id="hud-reiniciar" title="Reiniciar nivel actual">Reiniciar (R)</button>
     <button class="boton-sci hud-caja" id="hud-sound" title="Activar o silenciar el sonido">Sonido: Sí</button>
+    <button class="boton-sci hud-caja" id="hud-personaje" title="Cambiar de personaje sin salir del nivel">Muñeco: Robot</button>
   </div>
 </div>
 <div id="crosshair-ayuda">Flechas / WASD: mover · ESPACIO: saltar · R: reiniciar nivel</div>
@@ -584,14 +585,14 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.32;
 dom.app.appendChild(renderer.domElement);
 
 // Cadena de postproceso: render + bloom neón + salida (tonemapping/sRGB) + FXAA.
 // El bloom se puede desactivar por calidad o por el vigilante de fps de animar().
 const composer = new EffectComposer(renderer);
 const renderPass = new RenderPass(scene, camera);
-const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.2, 0.85, 0.5);
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.15, 0.7, 0.82);
 const outputPass = new OutputPass();
 const fxaaPass = new ShaderPass(FXAAShader);
 composer.addPass(renderPass);
@@ -633,7 +634,7 @@ function crearTexturaGradiente() {
   return tex;
 }
 scene.background = crearTexturaGradiente();
-scene.fog = new THREE.FogExp2(0x05061a, 0.022);
+scene.fog = new THREE.FogExp2(0x0a0e22, 0.013);
 
 // Estrellas de fondo.
 function crearEstrellas() {
@@ -711,10 +712,10 @@ function actualizarPolvo(dt) {
 }
 
 // Iluminación.
-const luzAmbiente = new THREE.AmbientLight(0x2a3a66, 0.75);
+const luzAmbiente = new THREE.AmbientLight(0x8fa4cc, 1.15);
 scene.add(luzAmbiente);
 
-const luzDireccional = new THREE.DirectionalLight(0xfff2e0, 1.3);
+const luzDireccional = new THREE.DirectionalLight(0xfff2e0, 1.7);
 luzDireccional.position.set(12, 22, 14);
 luzDireccional.castShadow = true;
 luzDireccional.shadow.mapSize.set(1024, 1024);
@@ -724,7 +725,7 @@ scene.add(luzDireccional);
 scene.add(luzDireccional.target);
 
 // Luz de relleno fría desde abajo para dar aspecto sci-fi a las plataformas.
-const luzRelleno = new THREE.HemisphereLight(0x335577, 0x0a0a14, 0.5);
+const luzRelleno = new THREE.HemisphereLight(0x5577aa, 0x141428, 0.78);
 scene.add(luzRelleno);
 
 /* ----------------------------- Contenedor de nivel ------------------------ */
@@ -986,10 +987,15 @@ function marcarBotonesPersonaje() {
   br.style.borderColor = personaje === "robot" ? "#ffd76a" : "";
   bb.style.borderColor = personaje === "budy" ? "#ffd76a" : "";
 }
+function actualizarBotonPersonajeHud() {
+  const b = document.getElementById("hud-personaje");
+  if (b) b.textContent = "Muñeco: " + (personaje === "budy" ? "Budy" : "Robot");
+}
 function elegirPersonaje(p) {
   personaje = p;
   try { localStorage.setItem("rl-personaje", p); } catch (e) {}
   marcarBotonesPersonaje();
+  actualizarBotonPersonajeHud();
   instanciarJugador();
 }
 document.addEventListener("DOMContentLoaded", () => {
@@ -997,7 +1003,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const bb = document.getElementById("btn-per-budy");
   if (br) br.addEventListener("click", () => elegirPersonaje("robot"));
   if (bb) bb.addEventListener("click", () => elegirPersonaje("budy"));
+  const hp = document.getElementById("hud-personaje");
+  if (hp) hp.addEventListener("click", () => elegirPersonaje(personaje === "budy" ? "robot" : "budy"));
   marcarBotonesPersonaje();
+  actualizarBotonPersonajeHud();
 });
 
 const player = {
@@ -1212,7 +1221,7 @@ function construirOrbes(indiceNivel) {
     const mesh = new THREE.Mesh(
       new THREE.IcosahedronGeometry(0.22, 1),
       new THREE.MeshStandardMaterial({
-        color: 0x0a2a33, emissive: 0x4cf3ff, emissiveIntensity: 2.2,
+        color: 0x0a2a33, emissive: 0x4cf3ff, emissiveIntensity: 0.85,
         metalness: 0.1, roughness: 0.35,
       })
     );
