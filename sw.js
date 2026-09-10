@@ -3,7 +3,7 @@
    sin conexión. Same-origin: cache-first con relleno de caché. CDN de three.js:
    stale-while-revalidate. Navegaciones: index.html de caché con fallback a red. */
 
-const VERSION = "1.3.3-version-visible";
+const VERSION = "1.3.4-boton-a-prueba-de-bomba";
 const CACHE = "robot-" + VERSION;
 const PRECACHE = [
   "./",
