@@ -3,7 +3,7 @@
    sin conexión. Same-origin: cache-first con relleno de caché. CDN de three.js:
    stale-while-revalidate. Navegaciones: index.html de caché con fallback a red. */
 
-const VERSION = "robot-v6";
+const VERSION = "1.3.0-budy";
 const CACHE = "robot-" + VERSION;
 const PRECACHE = [
   "./",
@@ -14,6 +14,7 @@ const PRECACHE = [
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
   "./robot.glb",
+  "./budy.glb",
 ];
 
 self.addEventListener("install", (e) => {

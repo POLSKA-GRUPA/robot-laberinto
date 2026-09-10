@@ -322,6 +322,10 @@
   <div class="panel">
     <h1 class="titulo-juego">ROBOT</h1>
     <p class="subtitulo">Laberinto de Plataformas</p>
+    <div id="selector-personaje" style="margin:8px 0 2px;">
+      <button class="boton-sci boton-secundario" id="btn-per-robot" style="margin:3px; min-width:110px;">&#129302; ROBOT</button>
+      <button class="boton-sci boton-secundario" id="btn-per-budy" style="margin:3px; min-width:110px;">&#129663; BUDY</button>
+    </div>
     <p class="instrucciones">
       Guía al robot a través de 17 niveles flotantes hasta el portal.<br/>
       <span class="tecla">&#8593;</span><span class="tecla">&#8592;</span><span class="tecla">&#8595;</span><span class="tecla">&#8594;</span>
@@ -333,7 +337,7 @@
       <button class="boton-sci boton-secundario" id="btn-continuar" style="display:none;">Continuar</button>
       <button class="boton-sci boton-secundario" id="btn-instalar" style="display:none;">Instalar app</button>
     </div>
-    <p class="info-carga" id="info-carga">Cargando robot (0%)…</p>
+    <p class="info-carga" id="info-carga">Cargando personajes (0%)…</p>
     <p class="info-progreso" id="info-progreso"></p>
     <p class="info-carga" id="pista-ios" style="display:none;">En iPhone: botón Compartir de Safari y luego Añadir a pantalla de inicio</p>
   </div>
@@ -971,6 +975,30 @@ function crearPortal(datosNivel) {
 /* -------------------------- Robot / jugador --------------------------- */
 
 let robotTemplate = null; // Escena GLTF ya centrada/escalada, se clona para el jugador.
+let budyTemplate = null;  // Personaje 2: el muñeco de Natalia (también estático).
+let personaje = "robot";
+try { personaje = localStorage.getItem("rl-personaje") || "robot"; } catch (e) {}
+function plantillaActiva() { return personaje === "budy" ? budyTemplate : robotTemplate; }
+function marcarBotonesPersonaje() {
+  const br = document.getElementById("btn-per-robot");
+  const bb = document.getElementById("btn-per-budy");
+  if (!br || !bb) return;
+  br.style.borderColor = personaje === "robot" ? "#ffd76a" : "";
+  bb.style.borderColor = personaje === "budy" ? "#ffd76a" : "";
+}
+function elegirPersonaje(p) {
+  personaje = p;
+  try { localStorage.setItem("rl-personaje", p); } catch (e) {}
+  marcarBotonesPersonaje();
+  instanciarJugador();
+}
+document.addEventListener("DOMContentLoaded", () => {
+  const br = document.getElementById("btn-per-robot");
+  const bb = document.getElementById("btn-per-budy");
+  if (br) br.addEventListener("click", () => elegirPersonaje("robot"));
+  if (bb) bb.addEventListener("click", () => elegirPersonaje("budy"));
+  marcarBotonesPersonaje();
+});
 
 const player = {
   root: new THREE.Group(),       // Posición del mundo = pies del robot.
@@ -1430,11 +1458,11 @@ function centrarYEscalarModelo(modelo) {
   });
 }
 
-function cargarRobot(onProgress) {
+function cargarModeloGLB(url, onProgress) {
   return new Promise((resolve, reject) => {
     const loader = new GLTFLoader();
     loader.load(
-      "./robot.glb",
+      url,
       (gltf) => {
         const modelo = gltf.scene;
         centrarYEscalarModelo(modelo);
@@ -1452,7 +1480,7 @@ function instanciarJugador() {
   if (player.visual) {
     player.bob.remove(player.visual);
   }
-  player.visual = robotTemplate.clone(true);
+  player.visual = plantillaActiva().clone(true);
   player.visual.rotation.y = MODEL_FORWARD_OFFSET;
   player.bob.add(player.visual);
 }
@@ -1910,13 +1938,13 @@ dom.btnJugarDeNuevo.addEventListener("click", () => {
 });
 
 dom.btnJugar.addEventListener("click", () => {
-  if (!robotTemplate) return;
+  if (!robotTemplate || !budyTemplate) return;
   iniciarAudio();
   iniciarJuegoDesdeNivel(0);
 });
 
 dom.btnContinuar.addEventListener("click", () => {
-  if (!robotTemplate) return;
+  if (!robotTemplate || !budyTemplate) return;
   iniciarAudio();
   iniciarJuegoDesdeNivel(Math.min(progreso.maxNivel, LEVELS.length - 1));
 });
@@ -2040,21 +2068,24 @@ function animar() {
 
 /* ------------------------------- Arranque ------------------------------- */
 
-cargarRobot((evt) => {
+const progresoCarga = (nombre) => (evt) => {
   if (evt.total) {
     const pct = Math.round((evt.loaded / evt.total) * 100);
-    dom.infoCarga.textContent = `Cargando robot (${pct}%)…`;
+    dom.infoCarga.textContent = `Cargando ${nombre} (${pct}%)…`;
   } else {
-    dom.infoCarga.textContent = "Cargando robot…";
+    dom.infoCarga.textContent = `Cargando ${nombre}…`;
   }
-}).then((modelo) => {
-  robotTemplate = modelo;
-  dom.infoCarga.textContent = "Robot listo.";
+};
+Promise.all([
+  cargarModeloGLB("./robot.glb", progresoCarga("robot")).then((m) => { robotTemplate = m; }),
+  cargarModeloGLB("./budy.glb", progresoCarga("budy")).then((m) => { budyTemplate = m; }),
+]).then(() => {
+  dom.infoCarga.textContent = "Personajes listos.";
   dom.btnJugar.disabled = false;
   dom.btnJugar.textContent = "Jugar";
 }).catch((err) => {
-  console.error("Error cargando robot.glb:", err);
-  dom.infoCarga.textContent = "Error al cargar robot.glb. Revisa la consola.";
+  console.error("Error cargando personajes:", err);
+  dom.infoCarga.textContent = "Error al cargar personajes. Revisa la consola.";
 });
 
 animar();

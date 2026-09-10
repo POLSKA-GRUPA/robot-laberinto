@@ -1,5 +1,7 @@
 # 🤖 ROBOT: Laberinto de Plataformas
 
+> 🧸 **NUEVO:** elige personaje al arrancar — **ROBOT** o **BUDY** (el muñeco de Natalia)
+
 Juego 3D de plataformas en el navegador con un robot diseñado por Natalia (Tripo AI).
 
 ## 👉 JUGAR AQUÍ
