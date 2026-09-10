@@ -323,7 +323,7 @@
   <div class="panel">
     <h1 class="titulo-juego">ROBOT</h1>
     <p class="subtitulo">Laberinto de Plataformas</p>
-    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.5.0 · FIESTA</p>
+    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.5.1 · FIESTA</p>
     <div id="selector-personaje" style="margin:8px 0 2px;">
       <button class="boton-sci boton-secundario" id="btn-per-robot" style="margin:3px; min-width:110px;">&#129302; ROBOT</button>
       <button class="boton-sci boton-secundario" id="btn-per-budy" style="margin:3px; min-width:110px;">&#129663; BUDY</button>
@@ -362,6 +362,7 @@
     <h2 id="lobby-titulo">SALA</h2>
     <p style="color:#9fd8ff; letter-spacing:2px;">Comparte este enlace con tus amigos:</p>
     <p id="lobby-enlace" style="color:#ffd76a; font-size:14px; word-break:break-all; user-select:all;"></p>
+    <div id="lobby-qr" style="background:#fff; display:inline-block; padding:10px; border-radius:10px; margin-top:8px; min-height:60px; min-width:60px;" title="Escanea para entrar a la sala"></div>
     <ul id="lista-lobby" style="list-style:none; padding:0; margin:14px 0; font-size:17px;"></ul>
     <button class="boton-sci" id="btn-empezar-carrera" style="display:none;">&#127914; &iexcl;EMPEZAR CARRERA!</button>
     <p id="lobby-espera" style="color:#8fa8c8; display:none;">Esperando a que el anfitri&oacute;n empiece&hellip;</p>
@@ -2237,7 +2238,16 @@ async function entrarFiesta(comoHost, codigo) {
   FIESTA.enviar = enviar; FIESTA.evento = evento;
   // Lobby
   document.getElementById("lobby-titulo").textContent = "SALA " + codigo;
-  document.getElementById("lobby-enlace").textContent = location.origin + location.pathname + "?room=" + codigo;
+  const enlaceSala = location.origin + location.pathname + "?room=" + codigo;
+  document.getElementById("lobby-enlace").textContent = enlaceSala;
+  try {
+    const mod = await import("https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/+esm");
+    const fabricarQR = mod.default || mod;
+    const qr = fabricarQR(0, "M");
+    qr.addData(enlaceSala);
+    qr.make();
+    document.getElementById("lobby-qr").innerHTML = qr.createSvgTag({ cellSize: 4, margin: 1, scalable: true });
+  } catch (e) { console.warn("QR no disponible:", e); }
   document.getElementById("pantalla-inicio").classList.add("hidden");
   document.getElementById("pantalla-lobby").classList.remove("hidden");
   refrescarLobby();
