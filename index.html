@@ -323,7 +323,7 @@
   <div class="panel">
     <h1 class="titulo-juego">ROBOT</h1>
     <p class="subtitulo">Laberinto de Plataformas</p>
-    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.3.4</p>
+    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.5.0 · FIESTA</p>
     <div id="selector-personaje" style="margin:8px 0 2px;">
       <button class="boton-sci boton-secundario" id="btn-per-robot" style="margin:3px; min-width:110px;">&#129302; ROBOT</button>
       <button class="boton-sci boton-secundario" id="btn-per-budy" style="margin:3px; min-width:110px;">&#129663; BUDY</button>
@@ -339,10 +339,46 @@
       <button class="boton-sci boton-secundario" id="btn-continuar" style="display:none;">Continuar</button>
       <button class="boton-sci boton-secundario" id="btn-instalar" style="display:none;">Instalar app</button>
     </div>
+    <div style="margin-top:14px; border-top:1px solid rgba(120,150,180,.25); padding-top:12px;">
+      <input id="input-nombre-fiesta" maxlength="12" placeholder="Tu nombre" style="background:rgba(10,16,34,.8); border:1px solid #3d5a78; color:#e8f2fa; padding:8px 10px; border-radius:8px; font-size:15px; text-align:center; width:170px;">
+      <div style="margin-top:8px;">
+        <button class="boton-sci boton-secundario" id="btn-crear-sala" style="margin:3px;">&#128101; Crear sala</button>
+        <button class="boton-sci boton-secundario" id="btn-unirse-sala" style="margin:3px;">Unirme con c&oacute;digo</button>
+      </div>
+      <div id="zona-codigo" style="display:none; margin-top:6px;">
+        <input id="input-codigo-sala" maxlength="4" placeholder="C&Oacute;DIGO" style="background:rgba(10,16,34,.8); border:1px solid #3d5a78; color:#ffd76a; padding:8px 10px; border-radius:8px; font-size:18px; letter-spacing:6px; text-align:center; width:120px; text-transform:uppercase;">
+        <button class="boton-sci" id="btn-entrar-sala">Entrar</button>
+      </div>
+    </div>
     <p class="info-carga" id="info-carga">Cargando personajes (0%)…</p>
     <p class="info-progreso" id="info-progreso"></p>
     <p class="info-carga" id="pista-ios" style="display:none;">En iPhone: botón Compartir de Safari y luego Añadir a pantalla de inicio</p>
   </div>
+</div>
+
+<!-- Vestibulo de fiesta -->
+<div class="overlay hidden" id="pantalla-lobby">
+  <div class="panel">
+    <h2 id="lobby-titulo">SALA</h2>
+    <p style="color:#9fd8ff; letter-spacing:2px;">Comparte este enlace con tus amigos:</p>
+    <p id="lobby-enlace" style="color:#ffd76a; font-size:14px; word-break:break-all; user-select:all;"></p>
+    <ul id="lista-lobby" style="list-style:none; padding:0; margin:14px 0; font-size:17px;"></ul>
+    <button class="boton-sci" id="btn-empezar-carrera" style="display:none;">&#127914; &iexcl;EMPEZAR CARRERA!</button>
+    <p id="lobby-espera" style="color:#8fa8c8; display:none;">Esperando a que el anfitri&oacute;n empiece&hellip;</p>
+  </div>
+</div>
+
+<!-- Cuenta atras -->
+<div class="overlay hidden" id="pantalla-cuenta" style="background:rgba(5,8,20,.55); pointer-events:none;">
+  <div style="font-size:120px; font-weight:900; color:#ffd76a; text-shadow:0 0 40px rgba(255,215,106,.6);">3</div>
+</div>
+
+<!-- Panel de meta de fiesta -->
+<div id="panel-meta" style="position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(10,16,34,.94); border:1px solid #3d5a78; border-radius:14px; padding:18px 26px; z-index:40; display:none; min-width:260px;">
+  <h3 style="margin:0 0 10px 0; color:#ffd76a;">&#127937; Meta</h3>
+  <ol id="lista-meta" style="margin:0; padding-left:22px; color:#e8f2fa; font-size:16px;"></ol>
+  <button class="boton-sci" id="btn-meta-siguiente" style="display:none; margin-top:14px;">Siguiente nivel &rarr;</button>
+  <p id="meta-espera" style="color:#8fa8c8; font-size:13px; margin:10px 0 0 0; display:none;">El anfitri&oacute;n pasar&aacute; al siguiente nivel&hellip;</p>
 </div>
 
 <!-- Nivel superado -->
@@ -2126,6 +2162,206 @@ Promise.all([
 });
 
 animar();
+
+/* ============ MODO FIESTA: multijugador P2P con Trystero (sin servidor) ============ */
+const FIESTA = { activa:false, sala:null, codigo:null, soyHost:false, nombre:"", selfId:"",
+  peers:new Map(), enviar:null, evento:null, podio:new Map(), ultimoRefrescoLobby:0 };
+const COLORES_PEER = [0xff5f6d, 0x6dc2ff, 0xffd76a, 0x9dff6d, 0xc58cff, 0x6dfff2];
+const CODIGO_URL_FIESTA = (new URLSearchParams(location.search).get("room") || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+function colorDeId(id) { let n = 0; for (const ch of String(id)) n = (n * 31 + ch.charCodeAt(0)) >>> 0; return COLORES_PEER[n % COLORES_PEER.length]; }
+
+function spriteNombre(texto, colorHex) {
+  const c = document.createElement("canvas"); c.width = 256; c.height = 64;
+  const g = c.getContext("2d");
+  g.font = "bold 32px system-ui, sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
+  const w = Math.min(250, g.measureText(texto).width + 26);
+  g.fillStyle = "rgba(8,10,24,0.8)"; g.fillRect(128 - w/2, 10, w, 44);
+  g.fillStyle = "#" + colorHex.toString(16).padStart(6, "0"); g.fillText(texto, 128, 33);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest:false, transparent:true }));
+  s.scale.set(2.2, 0.55, 1); s.position.y = ROBOT_TARGET_HEIGHT + 0.55;
+  return s;
+}
+
+function generarCodigoFiesta() { const L = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; let s = ""; for (let i = 0; i < 4; i++) s += L[Math.floor(Math.random() * L.length)]; return s; }
+
+function asegurarPeer(id) {
+  if (!FIESTA.peers.has(id)) {
+    const grupo = new THREE.Group();
+    scene.add(grupo);
+    FIESTA.peers.set(id, { nombre:"…", personaje:"robot", grupo, mesh:null, etiqueta:null, dest:{x:0,y:-99,z:0,ry:0} });
+  }
+  return FIESTA.peers.get(id);
+}
+function reconstruirPeer(p) {
+  if (p.mesh) { p.grupo.remove(p.mesh); }
+  p.mesh = (p.personaje === "budy" ? budyTemplate : robotTemplate).clone(true);
+  p.mesh.rotation.y = MODEL_FORWARD_OFFSET;
+  p.grupo.add(p.mesh);
+}
+function quitarPeer(id) {
+  const p = FIESTA.peers.get(id);
+  if (p) { scene.remove(p.grupo); FIESTA.peers.delete(id); }
+}
+
+function refrescarLobby() {
+  const ahora = performance.now();
+  if (ahora - FIESTA.ultimoRefrescoLobby < 300) return;
+  FIESTA.ultimoRefrescoLobby = ahora;
+  const ul = document.getElementById("lista-lobby");
+  if (!ul) return;
+  let html = "<li>&#127914; <b>" + FIESTA.nombre + "</b> (t&uacute;) — " + (personaje === "budy" ? "Budy" : "Robot") + "</li>";
+  for (const [id, p] of FIESTA.peers) html += "<li>&#128100; <b>" + p.nombre + "</b> — " + (p.personaje === "budy" ? "Budy" : "Robot") + "</li>";
+  ul.innerHTML = html;
+  document.getElementById("btn-empezar-carrera").style.display = FIESTA.soyHost ? "" : "none";
+  document.getElementById("lobby-espera").style.display = FIESTA.soyHost ? "none" : "";
+}
+
+async function entrarFiesta(comoHost, codigo) {
+  if (FIESTA.activa) return;
+  let joinRoom;
+  try {
+    ({ joinRoom } = await import("https://cdn.jsdelivr.net/npm/trystero@0.21.6/+esm"));
+  } catch (e) {
+    alert("No se pudo cargar el modulo multijugador. &iquest;Tienes internet?");
+    return;
+  }
+  FIESTA.activa = true; FIESTA.soyHost = comoHost; FIESTA.codigo = codigo;
+  FIESTA.nombre = ((document.getElementById("input-nombre-fiesta") || {}).value || "").trim().slice(0, 12) || (comoHost ? "Anfitrion" : "Jugador");
+  history.replaceState(null, "", "?room=" + codigo);
+  const room = joinRoom({ appId: "robot-laberinto-pgk-fiesta" }, "fiesta-" + codigo);
+  FIESTA.sala = room; FIESTA.selfId = room.selfId;
+  const [enviar, recibir] = room.makeAction("estado");
+  const [evento, onEvento] = room.makeAction("evento");
+  FIESTA.enviar = enviar; FIESTA.evento = evento;
+  // Lobby
+  document.getElementById("lobby-titulo").textContent = "SALA " + codigo;
+  document.getElementById("lobby-enlace").textContent = location.origin + location.pathname + "?room=" + codigo;
+  document.getElementById("pantalla-inicio").classList.add("hidden");
+  document.getElementById("pantalla-lobby").classList.remove("hidden");
+  refrescarLobby();
+  room.onPeerJoin((id) => { asegurarPeer(id); reconstruirPeer(FIESTA.peers.get(id)); refrescarLobby(); });
+  room.onPeerLeave((id) => { quitarPeer(id); refrescarLobby(); });
+  recibir((d, id) => {
+    const p = asegurarPeer(id);
+    const cambio = p.nombre !== String(d[0]) || p.personaje !== d[1];
+    p.nombre = String(d[0]).slice(0, 12); p.personaje = d[1] === "budy" ? "budy" : "robot";
+    if (cambio || !p.mesh) {
+      reconstruirPeer(p);
+      if (p.etiqueta) p.grupo.remove(p.etiqueta);
+      p.etiqueta = spriteNombre(p.nombre, colorDeId(id));
+      p.grupo.add(p.etiqueta);
+      refrescarLobby();
+    }
+    p.dest = { x: d[2], y: d[3], z: d[4], ry: d[5] || 0 };
+  });
+  onEvento((d) => {
+    if (!d) return;
+    if (d.t === "empezar" || d.t === "siguiente") arrancarCarrera(d.nivel || 0);
+    else if (d.t === "meta") registrarMeta("remoto-" + d.nombre, String(d.nombre).slice(0, 12), d.ms, false);
+  });
+  // latido: anuncio y posicion 10 veces por segundo
+  setInterval(() => {
+    if (!FIESTA.activa || !FIESTA.enviar) return;
+    FIESTA.enviar([FIESTA.nombre, personaje,
+      +player.root.position.x.toFixed(2), +player.root.position.y.toFixed(2), +player.root.position.z.toFixed(2), +player.root.rotation.y.toFixed(2)]);
+  }, 100);
+}
+
+function arrancarCarrera(nivel) {
+  document.getElementById("pantalla-lobby").classList.add("hidden");
+  document.getElementById("panel-meta").style.display = "none";
+  document.getElementById("pantalla-completado").classList.add("hidden");
+  const cuenta = document.getElementById("pantalla-cuenta");
+  const num = cuenta.firstElementChild;
+  cuenta.classList.remove("hidden");
+  iniciarAudio();
+  let n = 3;
+  num.textContent = String(n);
+  const iv = setInterval(() => {
+    n -= 1;
+    if (n <= 0) {
+      clearInterval(iv);
+      num.textContent = "&iexcl;YA!";
+      setTimeout(() => {
+        cuenta.classList.add("hidden");
+        iniciarJuegoDesdeNivel(nivel);
+      }, 500);
+    } else num.textContent = String(n);
+  }, 900);
+}
+
+// Meta: envolver la celebracion original para avisar por la red
+const iniciarCelebracionOriginal = iniciarCelebracion;
+iniciarCelebracion = function () {
+  iniciarCelebracionOriginal();
+  if (FIESTA.activa) {
+    const ms = gameState.tiempoNivel;
+    registrarMeta(FIESTA.selfId, FIESTA.nombre, ms, true);
+    if (FIESTA.evento) FIESTA.evento({ t: "meta", nombre: FIESTA.nombre, ms: Math.round(ms * 10) / 10 });
+  }
+};
+// recibir metas remotas: enganchado tras entrarFiesta via onEvento ampliado
+function registrarMeta(id, nombre, ms, propio) {
+  if (!FIESTA.podio.has(id)) {
+    FIESTA.podio.set(id, { nombre, ms });
+    const panel = document.getElementById("panel-meta");
+    const ol = document.getElementById("lista-meta");
+    const entradas = Array.from(FIESTA.podio.entries()).sort((a, b) => a[1].ms - b[1].ms);
+    ol.innerHTML = entradas.map((e, i) => "<li>" + (i === 0 ? "&#129351;" : i === 1 ? "&#129352;" : i === 2 ? "&#129353;" : "&#9878;") + " <b>" + e[1].nombre + "</b> — " + formatearTiempo(e[1].ms) + "</li>").join("");
+    panel.style.display = "";
+    document.getElementById("btn-meta-siguiente").style.display = FIESTA.soyHost ? "" : "none";
+    document.getElementById("meta-espera").style.display = FIESTA.soyHost ? "none" : "";
+  }
+}
+
+// Animar remotos: envolver el bucle principal
+const animarOriginalFiesta = animar;
+animar = function () {
+  const t = performance.now();
+  for (const p of FIESTA.peers.values()) {
+    if (!p.mesh) continue;
+    const d = p.dest;
+    if (d.y > -90) {
+      p.grupo.position.x += (d.x - p.grupo.position.x) * 0.25;
+      p.grupo.position.y += (d.y - p.grupo.position.y) * 0.25;
+      p.grupo.position.z += (d.z - p.grupo.position.z) * 0.25;
+      p.mesh.rotation.y = d.ry || 0;
+    }
+  }
+  animarOriginalFiesta();
+};
+
+// Botones de la UI
+document.getElementById("btn-crear-sala").addEventListener("click", () => { if (robotTemplate && budyTemplate) entrarFiesta(true, generarCodigoFiesta()); else alert("Espera a que carguen los personajes."); });
+document.getElementById("btn-unirse-sala").addEventListener("click", () => { document.getElementById("zona-codigo").style.display = ""; document.getElementById("input-codigo-sala").focus(); });
+document.getElementById("btn-entrar-sala").addEventListener("click", () => {
+  const cod = (document.getElementById("input-codigo-sala").value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (cod.length !== 4) { alert("El codigo tiene 4 letras."); return; }
+  if (robotTemplate && budyTemplate) entrarFiesta(false, cod);
+});
+document.getElementById("btn-empezar-carrera").addEventListener("click", () => {
+  if (!FIESTA.soyHost) return;
+  if (FIESTA.evento) FIESTA.evento({ t: "empezar", nivel: 0 });
+  arrancarCarrera(0);
+});
+document.getElementById("btn-meta-siguiente").addEventListener("click", () => {
+  if (!FIESTA.soyHost) return;
+  FIESTA.podio.clear();
+  const nivel = Math.min(gameState.nivelIndex + 1, LEVELS.length - 1);
+  if (FIESTA.evento) FIESTA.evento({ t: "siguiente", nivel });
+  arrancarCarrera(nivel);
+});
+// Metas remotas llegan como evento 'meta'
+
+// Auto-entrada por enlace ?room=CODE
+setTimeout(() => {
+  if (CODIGO_URL_FIESTA.length === 4 && robotTemplate && budyTemplate && !FIESTA.activa) {
+    document.getElementById("input-codigo-sala").value = CODIGO_URL_FIESTA;
+    entrarFiesta(false, CODIGO_URL_FIESTA);
+  }
+}, 600);
 
 // Hook de depuración/verificación: solo con ?debug=1 en la URL. No afecta al juego
 // normal. Expone estado interno para pruebas automatizadas.
