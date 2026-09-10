@@ -323,7 +323,7 @@
   <div class="panel">
     <h1 class="titulo-juego">ROBOT</h1>
     <p class="subtitulo">Laberinto de Plataformas</p>
-    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.5.1 · FIESTA</p>
+    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.5.2 · FIESTA</p>
     <div id="selector-personaje" style="margin:8px 0 2px;">
       <button class="boton-sci boton-secundario" id="btn-per-robot" style="margin:3px; min-width:110px;">&#129302; ROBOT</button>
       <button class="boton-sci boton-secundario" id="btn-per-budy" style="margin:3px; min-width:110px;">&#129663; BUDY</button>
@@ -363,7 +363,9 @@
     <p style="color:#9fd8ff; letter-spacing:2px;">Comparte este enlace con tus amigos:</p>
     <p id="lobby-enlace" style="color:#ffd76a; font-size:14px; word-break:break-all; user-select:all;"></p>
     <div id="lobby-qr" style="background:#fff; display:inline-block; padding:10px; border-radius:10px; margin-top:8px; min-height:60px; min-width:60px;" title="Escanea para entrar a la sala"></div>
-    <ul id="lista-lobby" style="list-style:none; padding:0; margin:14px 0; font-size:17px;"></ul>
+    <p id="lobby-conectados" style="color:#9fd8ff; margin:8px 0 4px 0; font-size:14px;">Conectando con la sala&hellip;</p>
+    <ul id="lista-lobby" style="list-style:none; padding:0; margin:10px 0; font-size:17px;"></ul>
+    <p style="color:#8fa8c8; font-size:12px; margin:0 0 10px 0;">Todos deben ver a todos los jugadores en la lista (con &#128994;)&nbsp;verde antes de empezar.</p>
     <button class="boton-sci" id="btn-empezar-carrera" style="display:none;">&#127914; &iexcl;EMPEZAR CARRERA!</button>
     <p id="lobby-espera" style="color:#8fa8c8; display:none;">Esperando a que el anfitri&oacute;n empiece&hellip;</p>
   </div>
@@ -2191,7 +2193,7 @@ function asegurarPeer(id) {
   if (!FIESTA.peers.has(id)) {
     const grupo = new THREE.Group();
     scene.add(grupo);
-    FIESTA.peers.set(id, { nombre:"…", personaje:"robot", grupo, mesh:null, etiqueta:null, dest:{x:0,y:-99,z:0,ry:0} });
+    FIESTA.peers.set(id, { nombre:"…", personaje:"robot", grupo, mesh:null, etiqueta:null, dest:{x:0,y:-99,z:0,ry:0}, vistoMs:0 });
   }
   return FIESTA.peers.get(id);
 }
@@ -2212,12 +2214,22 @@ function refrescarLobby() {
   FIESTA.ultimoRefrescoLobby = ahora;
   const ul = document.getElementById("lista-lobby");
   if (!ul) return;
-  let html = "<li>&#127914; <b>" + FIESTA.nombre + "</b> (t&uacute;) — " + (personaje === "budy" ? "Budy" : "Robot") + "</li>";
-  for (const [id, p] of FIESTA.peers) html += "<li>&#128100; <b>" + p.nombre + "</b> — " + (p.personaje === "budy" ? "Budy" : "Robot") + "</li>";
+  const vivo = (p) => (ahora - (p.vistoMs || 0)) < 3000;
+  const conectados = 1 + Array.from(FIESTA.peers.values()).filter(vivo).length;
+  let html = "<li>&#128994; <b>" + FIESTA.nombre + "</b> (t&uacute;) — " + (personaje === "budy" ? "Budy" : "Robot") + "</li>";
+  for (const p of FIESTA.peers.values()) {
+    html += "<li>" + (vivo(p) ? "&#128994;" : "&#128308;") + " <b>" + p.nombre + "</b> — " + (p.personaje === "budy" ? "Budy" : "Robot") + "</li>";
+  }
   ul.innerHTML = html;
-  document.getElementById("btn-empezar-carrera").style.display = FIESTA.soyHost ? "" : "none";
-  document.getElementById("lobby-espera").style.display = FIESTA.soyHost ? "none" : "";
+  const contador = document.getElementById("lobby-conectados");
+  if (contador) contador.textContent = "Jugadores conectados: " + conectados + (conectados < 2 ? " — esperando a que alguien entre por el enlace o el QR…" : " — ¡listos!");
+  const btn = document.getElementById("btn-empezar-carrera");
+  if (btn && FIESTA.soyHost) {
+    btn.disabled = conectados < 2;
+    btn.textContent = conectados < 2 ? "Esperando jugadores… (mínimo 2)" : "🎯 ¡EMPEZAR CARRERA! (" + conectados + ")";
+  }
 }
+setInterval(() => { if (FIESTA.activa && !document.getElementById("pantalla-lobby").classList.contains("hidden")) refrescarLobby(); }, 1200);
 
 async function entrarFiesta(comoHost, codigo) {
   if (FIESTA.activa) return;
@@ -2265,6 +2277,7 @@ async function entrarFiesta(comoHost, codigo) {
       refrescarLobby();
     }
     p.dest = { x: d[2], y: d[3], z: d[4], ry: d[5] || 0 };
+    p.vistoMs = performance.now();
   });
   onEvento((d) => {
     if (!d) return;
@@ -2286,7 +2299,7 @@ function arrancarCarrera(nivel) {
   const cuenta = document.getElementById("pantalla-cuenta");
   const num = cuenta.firstElementChild;
   cuenta.classList.remove("hidden");
-  iniciarAudio();
+  try { iniciarAudio(); } catch (e) {}
   let n = 3;
   num.textContent = String(n);
   const iv = setInterval(() => {
