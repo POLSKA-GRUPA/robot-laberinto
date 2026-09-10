@@ -323,7 +323,7 @@
   <div class="panel">
     <h1 class="titulo-juego">ROBOT</h1>
     <p class="subtitulo">Laberinto de Plataformas</p>
-    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.5.3 · FIESTA</p>
+    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.5.4 · FIESTA</p>
     <div id="selector-personaje" style="margin:8px 0 2px;">
       <button class="boton-sci boton-secundario" id="btn-per-robot" style="margin:3px; min-width:110px;">&#129302; ROBOT</button>
       <button class="boton-sci boton-secundario" id="btn-per-budy" style="margin:3px; min-width:110px;">&#129663; BUDY</button>
@@ -2246,6 +2246,7 @@ async function entrarFiesta(comoHost, codigo) {
     return;
   }
   FIESTA.activa = true; FIESTA.soyHost = comoHost; FIESTA.codigo = codigo;
+  if (comoHost) { try { localStorage.setItem("rl-anfitrion-de-" + codigo, "1"); } catch (e) {} }
   FIESTA.nombre = ((document.getElementById("input-nombre-fiesta") || {}).value || "").trim().slice(0, 12) || (comoHost ? "Anfitrion" : "Jugador");
   history.replaceState(null, "", "?room=" + codigo);
   const room = joinRoom({ appId: "robot-laberinto-pgk-fiesta" }, "fiesta-" + codigo);
@@ -2367,7 +2368,9 @@ document.getElementById("btn-unirse-sala").addEventListener("click", () => { doc
 document.getElementById("btn-entrar-sala").addEventListener("click", () => {
   const cod = (document.getElementById("input-codigo-sala").value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (cod.length !== 4) { alert("El codigo tiene 4 letras."); return; }
-  if (robotTemplate && budyTemplate) entrarFiesta(false, cod);
+  let fuiAnfitrion = false;
+  try { fuiAnfitrion = !!localStorage.getItem("rl-anfitrion-de-" + cod); } catch (e) {}
+  if (robotTemplate && budyTemplate) entrarFiesta(fuiAnfitrion, cod);
 });
 document.getElementById("btn-empezar-carrera").addEventListener("click", () => {
   if (!FIESTA.soyHost) return;
@@ -2386,8 +2389,9 @@ document.getElementById("btn-meta-siguiente").addEventListener("click", () => {
 // Auto-entrada por enlace ?room=CODE
 setTimeout(() => {
   if (CODIGO_URL_FIESTA.length === 4 && robotTemplate && budyTemplate && !FIESTA.activa) {
-    document.getElementById("input-codigo-sala").value = CODIGO_URL_FIESTA;
-    entrarFiesta(false, CODIGO_URL_FIESTA);
+    let fuiAnfitrion = false;
+    try { fuiAnfitrion = !!localStorage.getItem("rl-anfitrion-de-" + CODIGO_URL_FIESTA); } catch (e) {}
+    entrarFiesta(fuiAnfitrion, CODIGO_URL_FIESTA);
   }
 }, 600);
 
