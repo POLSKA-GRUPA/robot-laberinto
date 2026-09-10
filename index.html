@@ -323,7 +323,7 @@
   <div class="panel">
     <h1 class="titulo-juego">ROBOT</h1>
     <p class="subtitulo">Laberinto de Plataformas</p>
-    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.5.2 · FIESTA</p>
+    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.5.3 · FIESTA</p>
     <div id="selector-personaje" style="margin:8px 0 2px;">
       <button class="boton-sci boton-secundario" id="btn-per-robot" style="margin:3px; min-width:110px;">&#129302; ROBOT</button>
       <button class="boton-sci boton-secundario" id="btn-per-budy" style="margin:3px; min-width:110px;">&#129663; BUDY</button>
@@ -2224,10 +2224,15 @@ function refrescarLobby() {
   const contador = document.getElementById("lobby-conectados");
   if (contador) contador.textContent = "Jugadores conectados: " + conectados + (conectados < 2 ? " — esperando a que alguien entre por el enlace o el QR…" : " — ¡listos!");
   const btn = document.getElementById("btn-empezar-carrera");
-  if (btn && FIESTA.soyHost) {
-    btn.disabled = conectados < 2;
-    btn.textContent = conectados < 2 ? "Esperando jugadores… (mínimo 2)" : "🎯 ¡EMPEZAR CARRERA! (" + conectados + ")";
+  if (btn) {
+    btn.style.display = FIESTA.soyHost ? "" : "none";   // visible SOLO para el anfitrion
+    if (FIESTA.soyHost) {
+      btn.disabled = conectados < 2;
+      btn.textContent = conectados < 2 ? "Esperando jugadores… (mínimo 2)" : "🎯 ¡EMPEZAR CARRERA! (" + conectados + ")";
+    }
   }
+  const esp = document.getElementById("lobby-espera");
+  if (esp) esp.style.display = FIESTA.soyHost ? "none" : "";
 }
 setInterval(() => { if (FIESTA.activa && !document.getElementById("pantalla-lobby").classList.contains("hidden")) refrescarLobby(); }, 1200);
 
