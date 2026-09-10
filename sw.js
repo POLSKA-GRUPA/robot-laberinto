@@ -3,7 +3,7 @@
    sin conexión. Same-origin: cache-first con relleno de caché. CDN de three.js:
    stale-while-revalidate. Navegaciones: index.html de caché con fallback a red. */
 
-const VERSION = "1.3.1-luz-y-muneco";
+const VERSION = "1.3.2-auto-update";
 const CACHE = "robot-" + VERSION;
 const PRECACHE = [
   "./",
@@ -42,9 +42,15 @@ self.addEventListener("fetch", (e) => {
 
   // Navegaciones: siempre el documento de la app.
   if (req.mode === "navigate") {
+    // RED PRIMERO para el documento: si hay conexion ves la ultima version;
+    // sin conexion cae a la copia cacheada. Los assets pesados siguen cache-first.
     e.respondWith(
-      caches.match("./index.html").then((r) =>
-        r || fetch(req).catch(() => caches.match("./"))
+      fetch(req).then((resp) => {
+        const copia = resp.clone();
+        caches.open(CACHE).then((c) => c.put("./index.html", copia));
+        return resp;
+      }).catch(() =>
+        caches.match("./index.html").then((r) => r || caches.match("./"))
       )
     );
     return;

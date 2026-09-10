@@ -2076,6 +2076,19 @@ function animar() {
 }
 
 /* ------------------------------- Arranque ------------------------------- */
+// Auto-actualizacion: si hay un Service Worker nuevo, toma el control y la pagina
+// se recarga sola una vez. Ademas pedimos comprobar actualizaciones al abrir.
+try {
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.getRegistration().then((reg) => { if (reg) reg.update(); });
+    let rlRecargando = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (rlRecargando) return;
+      rlRecargando = true;
+      location.reload();
+    });
+  }
+} catch (e) {}
 
 const progresoCarga = (nombre) => (evt) => {
   if (evt.total) {
