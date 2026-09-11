@@ -323,7 +323,7 @@
   <div class="panel">
     <h1 class="titulo-juego">ROBOT</h1>
     <p class="subtitulo">Laberinto de Plataformas</p>
-    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.5.5 · FIESTA</p>
+    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.6.0 · FIESTA + VOZ</p>
     <div id="selector-personaje" style="margin:8px 0 2px;">
       <button class="boton-sci boton-secundario" id="btn-per-robot" style="margin:3px; min-width:110px;">&#129302; ROBOT</button>
       <button class="boton-sci boton-secundario" id="btn-per-budy" style="margin:3px; min-width:110px;">&#129663; BUDY</button>
@@ -386,6 +386,8 @@
   <button class="boton-sci" id="btn-meta-siguiente" style="display:none; margin-top:10px; font-size:13px; padding:6px 12px;">Siguiente nivel &rarr;</button>
   <p id="meta-espera" style="color:#8fa8c8; font-size:12px; margin:8px 0 0 0; display:none;">El anfitri&oacute;n pasar&aacute; al siguiente nivel&hellip;</p>
 </div>
+<button id="btn-hablar" title="Mantén pulsado para hablar" style="position:fixed; bottom:16px; left:50%; transform:translateX(-50%); width:68px; height:68px; border-radius:50%; border:2px solid #6dc2ff; background:rgba(10,16,34,.9); color:#6dc2ff; font-size:28px; cursor:pointer; z-index:30; display:none; user-select:none; touch-action:none; box-shadow:0 6px 24px rgba(0,0,0,.5);">&#127908;</button>
+<div id="quien-habla" style="position:fixed; top:64px; left:50%; transform:translateX(-50%); background:rgba(10,16,34,.94); border:1px solid #ffd76a; color:#ffd76a; border-radius:999px; padding:6px 16px; font-size:14px; z-index:31; display:none;">&#128266;</div>
 <button id="chip-meta" style="position:fixed; bottom:14px; right:14px; display:none; background:rgba(10,16,34,.92); border:1px solid #ffd76a; color:#ffd76a; border-radius:999px; padding:8px 16px; font-size:14px; cursor:pointer; z-index:41;">&#127937; Ver meta</button>
 
 <!-- Nivel superado -->
@@ -2177,7 +2179,8 @@ animar();
 
 /* ============ MODO FIESTA: multijugador P2P con Trystero (sin servidor) ============ */
 const FIESTA = { activa:false, sala:null, codigo:null, soyHost:false, nombre:"", selfId:"",
-  peers:new Map(), enviar:null, evento:null, podio:new Map(), ultimoRefrescoLobby:0 };
+  peers:new Map(), enviar:null, evento:null, podio:new Map(), ultimoRefrescoLobby:0,
+  audios:new Map(), micro:null, hablando:false };
 const COLORES_PEER = [0xff5f6d, 0x6dc2ff, 0xffd76a, 0x9dff6d, 0xc58cff, 0x6dfff2];
 const CODIGO_URL_FIESTA = (new URLSearchParams(location.search).get("room") || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
@@ -2231,7 +2234,7 @@ function refrescarLobby() {
   }
   ul.innerHTML = html;
   const contador = document.getElementById("lobby-conectados");
-  if (contador) contador.textContent = "Jugadores conectados: " + conectados + (conectados < 2 ? " — esperando a que alguien entre por el enlace o el QR…" : " — ¡listos!");
+  if (contador) contador.textContent = "Jugadores conectados: " + conectados + "/8" + (conectados < 2 ? " — esperando a que alguien entre por el enlace o el QR…" : " — ¡listos!");
   const btn = document.getElementById("btn-empezar-carrera");
   if (btn) {
     btn.style.display = FIESTA.soyHost ? "" : "none";   // visible SOLO para el anfitrion
@@ -2264,8 +2267,25 @@ async function entrarFiesta(comoHost, codigo) {
   FIESTA.activa = true; FIESTA.soyHost = comoHost; FIESTA.codigo = codigo;
   if (comoHost) { try { localStorage.setItem("rl-anfitrion-de-" + codigo, "1"); } catch (e) {} }
   history.replaceState(null, "", "?room=" + codigo);
-  const room = joinRoom({ appId: "robot-laberinto-pgk-fiesta" }, "fiesta-" + codigo);
+  const MAX_JUGADORES = 8;
+  const alEntrarStream = (stream, peerId) => {
+    try {
+      let audio = FIESTA.audios.get(peerId);
+      if (!audio) { audio = new Audio(); audio.autoplay = true; FIESTA.audios.set(peerId, audio); }
+      audio.srcObject = stream;
+      audio.play().catch(() => {});
+    } catch (e) {}
+  };
+  const room = joinRoom({ appId: "robot-laberinto-pgk-fiesta" }, "fiesta-" + codigo, alEntrarStream);
   FIESTA.sala = room; FIESTA.selfId = room.selfId;
+  // Limite de sala: si a los 3 segundos ya somos mas de 8, este entra y avisa
+  setTimeout(() => {
+    if (FIESTA.activa && FIESTA.peers.size + 1 > MAX_JUGADORES) {
+      alert("Sala llena (" + MAX_JUGADORES + "/" + MAX_JUGADORES + "). Crea otra sala.");
+      try { room.leave(); } catch (e) {}
+      location.href = location.pathname;
+    }
+  }, 3000);
   const [enviar, recibir] = room.makeAction("estado");
   const [evento, onEvento] = room.makeAction("evento");
   FIESTA.enviar = enviar; FIESTA.evento = evento;
@@ -2304,6 +2324,13 @@ async function entrarFiesta(comoHost, codigo) {
     if (!d) return;
     if (d.t === "empezar" || d.t === "siguiente") arrancarCarrera(d.nivel || 0);
     else if (d.t === "meta") registrarMeta("remoto-" + d.nombre, String(d.nombre).slice(0, 12), d.ms, false);
+    else if (d.t === "habla") {
+      const cartel = document.getElementById("quien-habla");
+      cartel.innerHTML = "&#128266; " + String(d.nombre).slice(0, 12) + " está hablando";
+      cartel.style.display = "";
+    } else if (d.t === "calla") {
+      document.getElementById("quien-habla").style.display = "none";
+    }
   });
   // latido: anuncio y posicion 10 veces por segundo
   setInterval(() => {
@@ -2317,6 +2344,7 @@ function arrancarCarrera(nivel) {
   document.getElementById("pantalla-lobby").classList.add("hidden");
   document.getElementById("panel-meta").style.display = "none";
   document.getElementById("chip-meta").style.display = "none";
+  document.getElementById("quien-habla").style.display = "none";
   document.getElementById("pantalla-completado").classList.add("hidden");
   const cuenta = document.getElementById("pantalla-cuenta");
   const num = cuenta.firstElementChild;
@@ -2396,11 +2424,13 @@ document.getElementById("btn-empezar-carrera").addEventListener("click", () => {
 document.getElementById("btn-meta-min").addEventListener("click", () => {
   document.getElementById("panel-meta").style.display = "none";
   document.getElementById("chip-meta").style.display = "none";
+  document.getElementById("quien-habla").style.display = "none";
   document.getElementById("chip-meta").style.display = "";
 });
 document.getElementById("chip-meta").addEventListener("click", () => {
   document.getElementById("panel-meta").style.display = "";
   document.getElementById("chip-meta").style.display = "none";
+  document.getElementById("quien-habla").style.display = "none";
 });
 document.getElementById("btn-meta-siguiente").addEventListener("click", () => {
   if (!FIESTA.soyHost) return;
@@ -2419,6 +2449,47 @@ setTimeout(() => {
     entrarFiesta(fuiAnfitrion, CODIGO_URL_FIESTA);
   }
 }, 600);
+
+/* ---------------- Push-to-talk: mantener pulsado el micro ---------------- */
+async function empezarHablar() {
+  if (!FIESTA.activa || FIESTA.hablando || !FIESTA.sala) return;
+  FIESTA.hablando = true;
+  const btn = document.getElementById("btn-hablar");
+  btn.style.borderColor = "#ff5f6d"; btn.style.color = "#ff5f6d";
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    FIESTA.micro = stream;
+    FIESTA.sala.addStream(stream);
+    if (FIESTA.evento) FIESTA.evento({ t: "habla", nombre: FIESTA.nombre });
+  } catch (e) {
+    alert("No se pudo abrir el microfono. Revisa el permiso del navegador.");
+    terminarHablar();
+  }
+}
+function terminarHablar() {
+  FIESTA.hablando = false;
+  const btn = document.getElementById("btn-hablar");
+  btn.style.borderColor = "#6dc2ff"; btn.style.color = "#6dc2ff";
+  try { if (FIESTA.micro) { FIESTA.sala.removeStream(FIESTA.micro); FIESTA.micro.getTracks().forEach((t) => t.stop()); } } catch (e) {}
+  FIESTA.micro = null;
+  if (FIESTA.evento) FIESTA.evento({ t: "calla" });
+}
+(function activarBotonHablar() {
+  const btn = document.getElementById("btn-hablar");
+  const prender = (e) => { e.preventDefault(); empezarHablar(); };
+  const apagar = () => { if (FIESTA.hablando) terminarHablar(); };
+  btn.addEventListener("pointerdown", prender);
+  btn.addEventListener("pointerup", apagar);
+  btn.addEventListener("pointercancel", apagar);
+  btn.addEventListener("pointerleave", apagar);
+  window.addEventListener("keydown", (e) => { if (e.key.toLowerCase() === "v" && FIESTA.activa && !FIESTA.hablando) empezarHablar(); });
+  window.addEventListener("keyup", (e) => { if (e.key.toLowerCase() === "v") apagar(); });
+})();
+// mostrar el micro solo en fiesta
+const mostrarMicroSegunFiesta = () => {
+  document.getElementById("btn-hablar").style.display = FIESTA.activa ? "" : "none";
+};
+setInterval(mostrarMicroSegunFiesta, 1500);
 
 // Hook de depuración/verificación: solo con ?debug=1 en la URL. No afecta al juego
 // normal. Expone estado interno para pruebas automatizadas.
