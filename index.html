@@ -2314,6 +2314,29 @@ async function entrarFiesta(comoHost, codigo) {
       const cartel = document.getElementById("quien-habla");
       cartel.innerHTML = "&#128266; " + (p ? p.nombre : "Alguien") + " (audio recibido)";
       cartel.style.display = "";
+      // AUTOTEST (?testvoz): medir RMS real del audio recibido y veredicto en el titulo
+      if (new URLSearchParams(location.search).has("testvoz") && ctx && ctx.state === "running") {
+        try {
+          const analizador = ctx.createAnalyser();
+          analizador.fftSize = 1024;
+          (FIESTA.fuentes.get(peerId) || src).connect(analizador);
+          const datos = new Uint8Array(analizador.fftSize);
+          let maxNivel = 0, muestras = 0;
+          const medidor = setInterval(() => {
+            analizador.getByteTimeDomainData(datos);
+            let suma = 0;
+            for (let i = 0; i < datos.length; i++) { const v = (datos[i] - 128) / 128; suma += v * v; }
+            const rms = Math.sqrt(suma / datos.length);
+            if (rms > maxNivel) maxNivel = rms;
+            muestras += 1;
+            if (muestras >= 30) { // ~6 s de escucha
+              clearInterval(medidor);
+              document.title = (maxNivel > 0.01 ? "VOZ-OK nivel " + maxNivel.toFixed(3) : "VOZ-FALLO silencio " + maxNivel.toFixed(4));
+            }
+          }, 200);
+          setTimeout(() => { if (muestras < 30) { document.title = "VOZ-FALLO timeout"; } }, 9000);
+        } catch (e) { document.title = "VOZ-FALLO analizador " + e.message; }
+      }
     } catch (e) {}
   };
   const room = joinRoom({
@@ -2565,6 +2588,9 @@ function terminarHablar() {
   const btn = document.getElementById("btn-hablar");
   const prender = (e) => { e.preventDefault(); empezarHablar(); };
   const apagar = () => { if (FIESTA.hablando) terminarHablar(); };
+  if (new URLSearchParams(location.search).has("testvoz")) {
+    btn.addEventListener("click", () => { if (FIESTA.hablando) terminarHablar(); else empezarHablar(); });
+  }
   btn.addEventListener("pointerdown", prender);
   btn.addEventListener("pointerup", apagar);
   btn.addEventListener("pointercancel", apagar);
