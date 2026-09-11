@@ -323,7 +323,7 @@
   <div class="panel">
     <h1 class="titulo-juego">ROBOT</h1>
     <p class="subtitulo">Laberinto de Plataformas</p>
-    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.6.4 · FIESTA + VOZ</p>
+    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.7.0-test · VOZ v2</p>
     <div id="selector-personaje" style="margin:8px 0 2px;">
       <button class="boton-sci boton-secundario" id="btn-per-robot" style="margin:3px; min-width:110px;">&#129302; ROBOT</button>
       <button class="boton-sci boton-secundario" id="btn-per-budy" style="margin:3px; min-width:110px;">&#129663; BUDY</button>
@@ -2563,9 +2563,12 @@ async function empezarHablar() {
   const btn = document.getElementById("btn-hablar");
   btn.style.borderColor = "#ff5f6d"; btn.style.color = "#ff5f6d";
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    FIESTA.micro = stream;
-    FIESTA.sala.addStream(stream);
+    if (!FIESTA.micro) {
+      // PRIMERA vez: abrir micro y anadir stream UNA sola vez (sin renegociaciones)
+      FIESTA.micro = await navigator.mediaDevices.getUserMedia({ audio: true });
+      FIESTA.sala.addStream(FIESTA.micro);
+    }
+    for (const t of FIESTA.micro.getAudioTracks()) t.enabled = true;
     const oyentes = FIESTA.peers.size;
     const cartel = document.getElementById("quien-habla");
     cartel.innerHTML = "&#127908; T&Uacute; en directo (" + oyentes + (oyentes === 1 ? " jugador te oye)" : " jugadores te oyen)");
