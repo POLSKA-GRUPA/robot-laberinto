@@ -2600,18 +2600,24 @@ function terminarHablar() {
   try { if (FIESTA.micro) { FIESTA.sala.removeStream(FIESTA.micro); FIESTA.micro.getTracks().forEach((t) => t.stop()); } } catch (e) {}
   FIESTA.micro = null;
   if (FIESTA.evento) FIESTA.evento({ t: "calla" });
+  const cartelFin = document.getElementById("quien-habla");
+  if (cartelFin && !FIESTA.escuchandoRemoto) cartelFin.style.display = "none";
 }
 (function activarBotonHablar() {
   const btn = document.getElementById("btn-hablar");
   const prender = (e) => { e.preventDefault(); empezarHablar(); };
   const apagar = () => { if (FIESTA.hablando) terminarHablar(); };
-  if (new URLSearchParams(location.search).has("testvoz")) {
+  const esModoTest = new URLSearchParams(location.search).has("testvoz");
+  if (esModoTest) {
+    // modo autotest: un clic enciende, otro apaga (sin conflictos con hold)
     btn.addEventListener("click", () => { if (FIESTA.hablando) terminarHablar(); else empezarHablar(); });
   }
-  btn.addEventListener("pointerdown", prender);
-  btn.addEventListener("pointerup", apagar);
-  btn.addEventListener("pointercancel", apagar);
-  btn.addEventListener("pointerleave", apagar);
+  if (!esModoTest) btn.addEventListener("pointerdown", prender);
+  if (!esModoTest) {
+    btn.addEventListener("pointerup", apagar);
+    btn.addEventListener("pointercancel", apagar);
+    btn.addEventListener("pointerleave", apagar);
+  }
   window.addEventListener("keydown", (e) => { if (e.key.toLowerCase() === "v" && FIESTA.activa && !FIESTA.hablando) empezarHablar(); });
   window.addEventListener("keyup", (e) => { if (e.key.toLowerCase() === "v") apagar(); });
 })();
