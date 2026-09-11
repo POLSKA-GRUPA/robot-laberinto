@@ -323,7 +323,7 @@
   <div class="panel">
     <h1 class="titulo-juego">ROBOT</h1>
     <p class="subtitulo">Laberinto de Plataformas</p>
-    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.6.2 · FIESTA + VOZ</p>
+    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.6.3 · FIESTA + VOZ</p>
     <div id="selector-personaje" style="margin:8px 0 2px;">
       <button class="boton-sci boton-secundario" id="btn-per-robot" style="margin:3px; min-width:110px;">&#129302; ROBOT</button>
       <button class="boton-sci boton-secundario" id="btn-per-budy" style="margin:3px; min-width:110px;">&#129663; BUDY</button>
@@ -349,6 +349,12 @@
         <input id="input-codigo-sala" maxlength="4" placeholder="C&Oacute;DIGO" style="background:rgba(10,16,34,.8); border:1px solid #3d5a78; color:#ffd76a; padding:8px 10px; border-radius:8px; font-size:18px; letter-spacing:6px; text-align:center; width:120px; text-transform:uppercase;">
         <button class="boton-sci" id="btn-entrar-sala">Entrar</button>
       </div>
+    </div>
+    <div id="panel-autoentrar" style="display:none; margin-top:10px; border:1px dashed #ffd76a; border-radius:12px; padding:12px;">
+      <p style="margin:0 0 8px 0; color:#ffd76a; font-size:15px;">Te espera la sala <b id="autoentrar-codigo" style="letter-spacing:3px;">----</b></p>
+      <input id="autoentrar-nombre" maxlength="12" placeholder="Tu nombre" style="background:rgba(10,16,34,.8); border:1px solid #3d5a78; color:#e8f2fa; padding:8px 10px; border-radius:8px; font-size:15px; text-align:center; width:160px;">
+      <button class="boton-sci" id="btn-autoentrar" style="margin-top:8px;">&iexcl;ENTRAR A LA SALA!</button>
+      <p id="autoentrar-info" style="color:#8fa8c8; font-size:12px; margin:8px 0 0 0;"></p>
     </div>
     <p class="info-carga" id="info-carga">Cargando personajes (0%)…</p>
     <p class="info-progreso" id="info-progreso"></p>
@@ -2473,14 +2479,42 @@ document.getElementById("btn-meta-siguiente").addEventListener("click", () => {
 });
 // Metas remotas llegan como evento 'meta'
 
-// Auto-entrada por enlace ?room=CODE
-setTimeout(() => {
-  if (CODIGO_URL_FIESTA.length === 4 && robotTemplate && budyTemplate && !FIESTA.activa) {
+// Auto-entrada por enlace ?room=CODE — robusta:
+// reintenta hasta 90 s (los personajes pesan 16 MB) y pide el nombre con
+// un panel propio en vez de abortar en silencio.
+(function autoEntrarSala() {
+  if (CODIGO_URL_FIESTA.length !== 4) return;
+  const panel = document.getElementById("panel-autoentrar");
+  document.getElementById("autoentrar-codigo").textContent = CODIGO_URL_FIESTA;
+  const listaros = () => robotTemplate && budyTemplate;
+  const intentar = (mostrarErrores) => {
+    if (FIESTA.activa || !listaros()) return false;
+    const campoPanel = document.getElementById("autoentrar-nombre");
+    const nombre = (campoPanel.value || "").trim().slice(0, 12);
+    if (!nombre) {
+      panel.style.display = "";
+      if (mostrarErrores) document.getElementById("autoentrar-info").textContent = "Escribe tu nombre para entrar";
+      return false;
+    }
+    const principal = document.getElementById("input-nombre-fiesta");
+    if (principal) principal.value = nombre;
     let fuiAnfitrion = false;
     try { fuiAnfitrion = !!localStorage.getItem("rl-anfitrion-de-" + CODIGO_URL_FIESTA); } catch (e) {}
+    panel.style.display = "none";
     entrarFiesta(fuiAnfitrion, CODIGO_URL_FIESTA);
-  }
-}, 600);
+    return true;
+  };
+  document.getElementById("btn-autoentrar").addEventListener("click", () => {
+    if (!listaros()) { document.getElementById("autoentrar-info").textContent = "Cargando personajes, un segundo…"; return; }
+    intentar(true);
+  });
+  let intentos = 0;
+  const iv = setInterval(() => {
+    intentos += 1;
+    if (FIESTA.activa || intentos > 180) { clearInterval(iv); return; }
+    intentar(false);
+  }, 500);
+})();
 
 /* ---------------- Push-to-talk: mantener pulsado el micro ---------------- */
 async function empezarHablar() {
