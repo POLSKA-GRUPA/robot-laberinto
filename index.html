@@ -323,7 +323,7 @@
   <div class="panel">
     <h1 class="titulo-juego">ROBOT</h1>
     <p class="subtitulo">Laberinto de Plataformas</p>
-    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.7.1 · VOZ v2</p>
+    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.7.2 · VOZ v2</p>
     <div id="selector-personaje" style="margin:8px 0 2px;">
       <button class="boton-sci boton-secundario" id="btn-per-robot" style="margin:3px; min-width:110px;">&#129302; ROBOT</button>
       <button class="boton-sci boton-secundario" id="btn-per-budy" style="margin:3px; min-width:110px;">&#129663; BUDY</button>
@@ -2349,7 +2349,7 @@ async function entrarFiesta(comoHost, codigo) {
       { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
     ],
   }, "fiesta-" + codigo);
-  room.onPeerStream = alEntrarStream; // API documentada: propiedad, no argumento
+  room.onPeerStream(alEntrarStream); // API de trystero 0.21.x: metodo (como onPeerJoin)
   FIESTA.sala = room; FIESTA.selfId = room.selfId;
   // Limite de sala: si a los 3 segundos ya somos mas de 8, este entra y avisa
   setTimeout(() => {
