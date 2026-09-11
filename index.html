@@ -2600,8 +2600,8 @@ function terminarHablar() {
   if (FIESTA.medidorMicro) { clearInterval(FIESTA.medidorMicro); FIESTA.medidorMicro = null; }
   const btn = document.getElementById("btn-hablar");
   btn.style.borderColor = "#6dc2ff"; btn.style.color = "#6dc2ff";
-  try { if (FIESTA.micro) { FIESTA.sala.removeStream(FIESTA.micro); FIESTA.micro.getTracks().forEach((t) => t.stop()); } } catch (e) {}
-  FIESTA.micro = null;
+  // VOZ v2: el stream queda anadido; soltar = silenciar la pista (sin renegociar)
+  try { if (FIESTA.micro) { for (const t of FIESTA.micro.getAudioTracks()) t.enabled = false; } } catch (e) {}
   if (FIESTA.evento) FIESTA.evento({ t: "calla" });
   const cartelFin = document.getElementById("quien-habla");
   if (cartelFin && !FIESTA.escuchandoRemoto) cartelFin.style.display = "none";
