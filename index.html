@@ -2570,6 +2570,22 @@ async function empezarHablar() {
     const cartel = document.getElementById("quien-habla");
     cartel.innerHTML = "&#127908; T&Uacute; en directo (" + oyentes + (oyentes === 1 ? " jugador te oye)" : " jugadores te oyen)");
     cartel.style.display = "";
+    // Medidor de nivel del propio micro: demuestra si este dispositivo captura voz
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      const ctxLocal = FIESTA.audioCtx || (FIESTA.audioCtx = new AC());
+      const analizadorLocal = ctxLocal.createAnalyser();
+      analizadorLocal.fftSize = 1024;
+      ctxLocal.createMediaStreamSource(stream).connect(analizadorLocal);
+      const datosLocal = new Uint8Array(analizadorLocal.fftSize);
+      FIESTA.medidorMicro = setInterval(() => {
+        analizadorLocal.getByteTimeDomainData(datosLocal);
+        let suma = 0;
+        for (let i = 0; i < datosLocal.length; i++) { const v = (datosLocal[i] - 128) / 128; suma += v * v; }
+        const rms = Math.sqrt(suma / datosLocal.length);
+        cartel.innerHTML = "&#127908; T&Uacute; en directo (" + oyentes + ") · micro " + (rms > 0.01 ? "&#128994; " : "&#128308; ") + Math.round(rms * 1000);
+      }, 300);
+    } catch (e) {}
     if (FIESTA.evento) FIESTA.evento({ t: "habla", nombre: FIESTA.nombre });
   } catch (e) {
     alert("No se pudo abrir el microfono. Revisa el permiso del navegador.");
@@ -2578,6 +2594,7 @@ async function empezarHablar() {
 }
 function terminarHablar() {
   FIESTA.hablando = false;
+  if (FIESTA.medidorMicro) { clearInterval(FIESTA.medidorMicro); FIESTA.medidorMicro = null; }
   const btn = document.getElementById("btn-hablar");
   btn.style.borderColor = "#6dc2ff"; btn.style.color = "#6dc2ff";
   try { if (FIESTA.micro) { FIESTA.sala.removeStream(FIESTA.micro); FIESTA.micro.getTracks().forEach((t) => t.stop()); } } catch (e) {}
