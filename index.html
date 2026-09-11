@@ -323,7 +323,7 @@
   <div class="panel">
     <h1 class="titulo-juego">ROBOT</h1>
     <p class="subtitulo">Laberinto de Plataformas</p>
-    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.8.0 · VOZ (patrón oficial)</p>
+    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.8.1 · VOZ + entrada verificada</p>
     <div id="selector-personaje" style="margin:8px 0 2px;">
       <button class="boton-sci boton-secundario" id="btn-per-robot" style="margin:3px; min-width:110px;">&#129302; ROBOT</button>
       <button class="boton-sci boton-secundario" id="btn-per-budy" style="margin:3px; min-width:110px;">&#129663; BUDY</button>
@@ -2258,7 +2258,7 @@ async function entrarFiesta(comoHost, codigo) {
   if (FIESTA.activa) return;
   let joinRoom;
   try {
-    ({ joinRoom } = await import("https://cdn.jsdelivr.net/npm/trystero@0.25.4/+esm"));
+    ({ joinRoom } = await import("https://cdn.jsdelivr.net/npm/trystero@0.21.6/+esm"));
   } catch (e) {
     alert("No se pudo cargar el modulo multijugador. &iquest;Tienes internet?");
     return;
@@ -2350,7 +2350,7 @@ async function entrarFiesta(comoHost, codigo) {
     ],
   }, "fiesta-" + codigo);
   // API oficial 0.25.x: propiedades. Y clave: el stream se reenvia a quien entra despues.
-  room.onPeerStream = alEntrarStream;
+  room.onPeerStream(alEntrarStream); // metodo en 0.21.6 (fuente room.js:388)
   FIESTA.sala = room; FIESTA.selfId = room.selfId;
   // Limite de sala: si a los 3 segundos ya somos mas de 8, este entra y avisa
   setTimeout(() => {
@@ -2378,17 +2378,18 @@ async function entrarFiesta(comoHost, codigo) {
   document.getElementById("pantalla-inicio").classList.add("hidden");
   document.getElementById("pantalla-lobby").classList.remove("hidden");
   refrescarLobby();
-  room.onPeerJoin = (id) => {
+  room.onPeerJoin((id) => {
     asegurarPeer(id); reconstruirPeer(FIESTA.peers.get(id)); refrescarLobby();
-    if (FIESTA.micro) { try { room.addStream(FIESTA.micro, { target: id }); } catch (e) {} }
-  };
-  room.onPeerLeave = (id) => {
+    // reenvio del stream a quien entra despues (patron oficial; en 0.21.6 targets = array)
+    if (FIESTA.micro) { try { room.addStream(FIESTA.micro, [id]); } catch (e) {} }
+  });
+  room.onPeerLeave((id) => {
     const a = FIESTA.audios.get(id);
     if (a) { try { a.pause(); a.remove(); } catch (e) {} FIESTA.audios.delete(id); }
     const f = FIESTA.fuentes.get(id);
     if (f) { try { f.disconnect(); } catch (e) {} FIESTA.fuentes.delete(id); }
     quitarPeer(id); refrescarLobby();
-  };
+  });
   recibir((d, id) => {
     const p = asegurarPeer(id);
     const cambio = p.nombre !== String(d[0]) || p.personaje !== d[1];
