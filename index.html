@@ -323,7 +323,7 @@
   <div class="panel">
     <h1 class="titulo-juego">ROBOT</h1>
     <p class="subtitulo">Laberinto de Plataformas</p>
-    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.6.3 · FIESTA + VOZ</p>
+    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.6.4 · FIESTA + VOZ</p>
     <div id="selector-personaje" style="margin:8px 0 2px;">
       <button class="boton-sci boton-secundario" id="btn-per-robot" style="margin:3px; min-width:110px;">&#129302; ROBOT</button>
       <button class="boton-sci boton-secundario" id="btn-per-budy" style="margin:3px; min-width:110px;">&#129663; BUDY</button>
@@ -2186,7 +2186,7 @@ animar();
 /* ============ MODO FIESTA: multijugador P2P con Trystero (sin servidor) ============ */
 const FIESTA = { activa:false, sala:null, codigo:null, soyHost:false, nombre:"", selfId:"",
   peers:new Map(), enviar:null, evento:null, podio:new Map(), ultimoRefrescoLobby:0,
-  audios:new Map(), micro:null, hablando:false };
+  audios:new Map(), fuentes:new Map(), audioCtx:null, micro:null, hablando:false };
 const COLORES_PEER = [0xff5f6d, 0x6dc2ff, 0xffd76a, 0x9dff6d, 0xc58cff, 0x6dfff2];
 const CODIGO_URL_FIESTA = (new URLSearchParams(location.search).get("room") || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
@@ -2274,33 +2274,48 @@ async function entrarFiesta(comoHost, codigo) {
   if (comoHost) { try { localStorage.setItem("rl-anfitrion-de-" + codigo, "1"); } catch (e) {} }
   history.replaceState(null, "", "?room=" + codigo);
   const MAX_JUGADORES = 8;
+  // Web Audio: el contexto se desbloquea con cualquier toque y vale para todos
+  // los audios posteriores (tecnica estandar para Safari/iOS). Respaldo: <audio>.
+  const ctxAudio = () => {
+    if (!FIESTA.audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) { try { FIESTA.audioCtx = new AC(); } catch (e) {} }
+    }
+    if (FIESTA.audioCtx && FIESTA.audioCtx.state === "suspended") FIESTA.audioCtx.resume().catch(() => {});
+    return FIESTA.audioCtx;
+  };
+  ["pointerdown", "touchstart", "keydown"].forEach((ev) =>
+    window.addEventListener(ev, () => { if (FIESTA.activa) ctxAudio(); }, { passive: true })
+  );
   const alEntrarStream = (stream, peerId) => {
     try {
-      let audio = FIESTA.audios.get(peerId);
-      if (!audio) {
-        audio = new Audio();
-        audio.setAttribute("playsinline", "");
-        audio.autoplay = true;
-        audio.style.display = "none";
-        document.body.appendChild(audio);
-        FIESTA.audios.set(peerId, audio);
+      // desconectar fuente anterior de ese peer (cada pulsacion = stream nuevo)
+      const vieja = FIESTA.fuentes.get(peerId);
+      if (vieja) { try { vieja.disconnect(); } catch (e) {} }
+      const ctx = ctxAudio();
+      if (ctx && ctx.state === "running") {
+        const src = ctx.createMediaStreamSource(stream);
+        src.connect(ctx.destination);
+        FIESTA.fuentes.set(peerId, src);
+      } else {
+        let audio = FIESTA.audios.get(peerId);
+        if (!audio) {
+          audio = new Audio();
+          audio.setAttribute("playsinline", "");
+          audio.autoplay = true;
+          audio.style.display = "none";
+          document.body.appendChild(audio);
+          FIESTA.audios.set(peerId, audio);
+        }
+        audio.srcObject = stream;
+        audio.play().catch(() => {});
       }
-      audio.srcObject = stream;
-      audio.play().catch(() => {});
       const p = FIESTA.peers.get(peerId);
       const cartel = document.getElementById("quien-habla");
       cartel.innerHTML = "&#128266; " + (p ? p.nombre : "Alguien") + " (audio recibido)";
       cartel.style.display = "";
-      if (FIESTA.desbloqueoAudio) audio.play().catch(() => {});
     } catch (e) {}
   };
-  // Desbloqueo de audio iOS: el primer toque de la pagina desbloquea los <audio>
-  const desbloquearAudio = () => {
-    FIESTA.desbloqueoAudio = true;
-    for (const a of FIESTA.audios.values()) { try { a.play().catch(() => {}); } catch (e) {} }
-    window.removeEventListener("pointerdown", desbloquearAudio);
-  };
-  window.addEventListener("pointerdown", desbloquearAudio);
   const room = joinRoom({
     appId: "robot-laberinto-pgk-fiesta",
     iceServers: [
@@ -2342,6 +2357,8 @@ async function entrarFiesta(comoHost, codigo) {
   room.onPeerLeave((id) => {
     const a = FIESTA.audios.get(id);
     if (a) { try { a.pause(); a.remove(); } catch (e) {} FIESTA.audios.delete(id); }
+    const f = FIESTA.fuentes.get(id);
+    if (f) { try { f.disconnect(); } catch (e) {} FIESTA.fuentes.delete(id); }
     quitarPeer(id); refrescarLobby();
   });
   recibir((d, id) => {
