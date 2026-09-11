@@ -323,7 +323,7 @@
   <div class="panel">
     <h1 class="titulo-juego">ROBOT</h1>
     <p class="subtitulo">Laberinto de Plataformas</p>
-    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.6.0 · FIESTA + VOZ</p>
+    <p style="margin:2px 0 0 0; font-size:10px; letter-spacing:1px; color:#5f7387;">versión 1.6.1 · FIESTA + VOZ</p>
     <div id="selector-personaje" style="margin:8px 0 2px;">
       <button class="boton-sci boton-secundario" id="btn-per-robot" style="margin:3px; min-width:110px;">&#129302; ROBOT</button>
       <button class="boton-sci boton-secundario" id="btn-per-budy" style="margin:3px; min-width:110px;">&#129663; BUDY</button>
@@ -2271,11 +2271,30 @@ async function entrarFiesta(comoHost, codigo) {
   const alEntrarStream = (stream, peerId) => {
     try {
       let audio = FIESTA.audios.get(peerId);
-      if (!audio) { audio = new Audio(); audio.autoplay = true; FIESTA.audios.set(peerId, audio); }
+      if (!audio) {
+        audio = new Audio();
+        audio.setAttribute("playsinline", "");
+        audio.autoplay = true;
+        audio.style.display = "none";
+        document.body.appendChild(audio);
+        FIESTA.audios.set(peerId, audio);
+      }
       audio.srcObject = stream;
       audio.play().catch(() => {});
+      const p = FIESTA.peers.get(peerId);
+      const cartel = document.getElementById("quien-habla");
+      cartel.innerHTML = "&#128266; " + (p ? p.nombre : "Alguien") + " (audio recibido)";
+      cartel.style.display = "";
+      if (FIESTA.desbloqueoAudio) audio.play().catch(() => {});
     } catch (e) {}
   };
+  // Desbloqueo de audio iOS: el primer toque de la pagina desbloquea los <audio>
+  const desbloquearAudio = () => {
+    FIESTA.desbloqueoAudio = true;
+    for (const a of FIESTA.audios.values()) { try { a.play().catch(() => {}); } catch (e) {} }
+    window.removeEventListener("pointerdown", desbloquearAudio);
+  };
+  window.addEventListener("pointerdown", desbloquearAudio);
   const room = joinRoom({ appId: "robot-laberinto-pgk-fiesta" }, "fiesta-" + codigo, alEntrarStream);
   FIESTA.sala = room; FIESTA.selfId = room.selfId;
   // Limite de sala: si a los 3 segundos ya somos mas de 8, este entra y avisa
@@ -2305,7 +2324,11 @@ async function entrarFiesta(comoHost, codigo) {
   document.getElementById("pantalla-lobby").classList.remove("hidden");
   refrescarLobby();
   room.onPeerJoin((id) => { asegurarPeer(id); reconstruirPeer(FIESTA.peers.get(id)); refrescarLobby(); });
-  room.onPeerLeave((id) => { quitarPeer(id); refrescarLobby(); });
+  room.onPeerLeave((id) => {
+    const a = FIESTA.audios.get(id);
+    if (a) { try { a.pause(); a.remove(); } catch (e) {} FIESTA.audios.delete(id); }
+    quitarPeer(id); refrescarLobby();
+  });
   recibir((d, id) => {
     const p = asegurarPeer(id);
     const cambio = p.nombre !== String(d[0]) || p.personaje !== d[1];
@@ -2460,6 +2483,10 @@ async function empezarHablar() {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     FIESTA.micro = stream;
     FIESTA.sala.addStream(stream);
+    const oyentes = FIESTA.peers.size;
+    const cartel = document.getElementById("quien-habla");
+    cartel.innerHTML = "&#127908; T&Uacute; en directo (" + oyentes + (oyentes === 1 ? " jugador te oye)" : " jugadores te oyen)");
+    cartel.style.display = "";
     if (FIESTA.evento) FIESTA.evento({ t: "habla", nombre: FIESTA.nombre });
   } catch (e) {
     alert("No se pudo abrir el microfono. Revisa el permiso del navegador.");
